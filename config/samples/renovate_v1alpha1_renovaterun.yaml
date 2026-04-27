@@ -1,0 +1,9 @@
+apiVersion: renovate.fartlab.dev/v1alpha1
+kind: RenovateRun
+metadata:
+  labels:
+    app.kubernetes.io/name: kube
+    app.kubernetes.io/managed-by: kustomize
+  name: renovaterun-sample
+spec:
+  # TODO(user): Add fields here
