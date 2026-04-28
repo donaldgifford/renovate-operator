@@ -191,6 +191,9 @@ jobs:
         run: helm package dist/chart --destination dist/chart-package
 
       - name: Helm push
+        # Push to ghcr.io/donaldgifford/charts so the resulting OCI ref is
+        # ghcr.io/donaldgifford/charts/renovate-operator:<version>, matching
+        # the install path in IMPL-0001 Phase 9 acceptance.
         run: |
           helm push dist/chart-package/renovate-operator-*.tgz \
-            oci://ghcr.io/donaldgifford/renovate-operator/charts
+            oci://ghcr.io/donaldgifford/charts
