@@ -4,7 +4,7 @@ version: 2
 builds:
   - id: renovate-operator
     binary: renovate-operator
-    main: ./cmd/renovate-operator
+    main: ./cmd
     goos:
       - linux
       - darwin
@@ -13,6 +13,11 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
 
 archives:
   - id: default
@@ -35,6 +40,13 @@ signs:
       - "${signature}"
       - "--detach-sign"
       - "${artifact}"
+
+# SBOM generation for the release artifacts. Attached to the GitHub
+# release alongside the checksums file.
+sboms:
+  - artifacts: archive
+    documents:
+      - "${artifact}.sbom.json"
 
 changelog:
   use: github

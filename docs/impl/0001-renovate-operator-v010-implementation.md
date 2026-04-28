@@ -300,16 +300,14 @@ Workflows wired through `just`, multi-arch image with cosign + SBOM, OCI Helm ch
 
 #### Tasks
 
-- [ ] Replace/refresh `.github/workflows/ci.yml` to call `just lint`, `just test`, `just license-check`. Verify it runs against the kubebuilder Makefile-backed targets.
-- [ ] Add `.github/workflows/test-e2e.yml` calling `just test-e2e` on PRs that touch `api/`, `internal/`, `dist/chart/`, or e2e files.
-- [ ] Reconcile `.goreleaser.yml` with the kubebuilder `Dockerfile` (build the manager from `cmd/main.go`, multi-arch linux/amd64 + linux/arm64).
-- [ ] `.github/workflows/release.yml` on tag push: goreleaser run, push image to `ghcr.io/donaldgifford/renovate-operator`, cosign sign artifacts (`signs.artifacts: checksum + manifests`), syft SBOM attached to the release.
-- [ ] Helm OCI push: `helm package dist/chart && helm push *.tgz oci://ghcr.io/donaldgifford/charts` step, gated on tag.
-- [ ] `make build-installer` artifact (`dist/install.yaml`) attached to the GitHub release for kustomize users.
-- [ ] Branch protection on `main`: require PR reviews, require `ci` workflow passing. (Repo-side, not committed — note in homelab handoff.)
-- [ ] Set `dist/chart/values.yaml` `image.repository: ghcr.io/donaldgifford/renovate-operator` per [Resolved Q7](#q7--image-registry-path-and-image-build-mechanism).
-- [ ] Create `docker-bake.hcl` at the repo root with `default`, `ci`, and `release` targets covering linux/amd64 + linux/arm64; reference it from `.github/workflows/release.yml` and `ci.yml` instead of `make docker-buildx`.
-- [ ] Helm OCI push target: `helm package dist/chart && helm push *.tgz oci://ghcr.io/donaldgifford/renovate-operator/charts` (the `charts/` subpath is part of the push URL).
+- [x] `.github/workflows/ci.yml` runs `make test-coverage` (replaces `just test`) plus golangci-lint, govulncheck, trivy, goreleaser-snapshot build, and a docker bake (`ci` target). Tightened the metadata-action `images:` ref from `ghcr.io/donaldgifford/` (broken trailing slash) to the canonical `ghcr.io/donaldgifford/renovate-operator`.
+- [x] `.github/workflows/test-e2e.yml` gated on `paths:` filter — `api/**`, `internal/**`, `cmd/**`, `dist/chart/**`, `test/e2e/**`, Dockerfile, go.mod/sum, Makefile. Helm setup added so the chart-deployment harness step works.
+- [x] `.goreleaser.yml` reconciled — `main: ./cmd` (kubebuilder layout), `-trimpath` + `-X main.version={{.Version}}` ldflags, SBOM block via syft (anchore/sbom-action). The build job in release.yml downloads syft so the goreleaser block can find it.
+- [x] `.github/workflows/release.yml`: goreleaser block now also uploads `dist/install.yaml` (kustomize artifact) via `gh release upload`. Docker job runs `cosign sign` (keyless / OIDC) per pushed tag. New `helm-chart` job stamps the release tag onto Chart.yaml and `helm push`es to `oci://ghcr.io/donaldgifford/renovate-operator/charts`.
+- [x] `docker-bake.hcl` at the repo root with `default` (single-arch local), `ci` (multi-arch verify, no push), and `release` (multi-arch push to GHCR) targets. Variables: `REGISTRY` (defaults to ghcr.io/donaldgifford/renovate-operator), `TAG`, `VERSION`. CI's metadata-action merges in tag refs via the `bake-file-tags` output.
+- [x] `make build-installer` artifact attached to the release via `gh release upload`. The release job builds it pre-goreleaser so a single workflow run covers both flows.
+- [x] `dist/chart/values.yaml` `image.repository: ghcr.io/donaldgifford/renovate-operator` confirmed per [Resolved Q7](#q7--image-registry-path-and-image-build-mechanism). Chart.yaml hardened with home/sources/maintainers/keywords/icon and ArtifactHub annotations.
+- [ ] Branch protection on `main`: require PR reviews, require `ci` workflow passing. (Repo-side configuration, not committed — note in homelab handoff.)
 
 #### Success Criteria
 

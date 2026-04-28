@@ -77,7 +77,12 @@ Tracked in [`docs/impl/0001-renovate-operator-v010-implementation.md`](docs/impl
 - Phase 7.1 (e2e harness refactor): `test/e2e/e2e_suite_test.go` rewritten — cert-manager hook stripped, `BeforeSuite` runs `make docker-build` + kind load + `helm upgrade --install` (with `defaultScan.enabled=false` to skip the chart guard). Three smoke specs in `e2e_test.go`: pod-running, CRDs-registered, manager-started log. Makefile `test-e2e` wraps `CERT_MANAGER_INSTALL_SKIP=true`. New `make test-coverage` prints per-package coverage from `cover.out`.
 - Phase 7.4 (controller + platform-client coverage uplift): every gate package clears the IMPL-0001 ≥80% bar. controller 82.8%, platform 100%, platform/forgejo 90.4%, platform/github 84.8%, sharding 92.0%, jobspec 92.7%. Lift came from fake.NewClientBuilder() tests covering the IO helpers (mirrorCredential, ensureShardConfigMap, ensureWorkerJob, observeJob, refreshActiveRuns, gcOldRuns, createRun, scansForPlatform, platformsForSecret) plus client-option tests for the platform SDKs.
 
-Phase 7 remaining: three e2e scenarios (GitHub stub, Forgejo container, parallelism) and `test/manual/README.md`. Phase 8 (CI/release), Phase 9 (homelab cutover) remain.
+- Phase 7.3 (manual / homelab acceptance runbook): `test/manual/README.md` documents two scenarios (GitHub.com against `donaldgifford/server-price-tracker` via App auth; homelab Forgejo via token auth) with full kubectl steps, acceptance checks (Scheduled cond, succeeded Run, PR opened, dashboard reconcile rate, runs_total counter), and a troubleshooting matrix.
+- Phase 8 (CI/CD reconcile): `.goreleaser.yml` rewritten for kubebuilder layout (`main: ./cmd`, `-trimpath`, `-X main.version={{.Version}}` ldflags, syft SBOM block). `.github/workflows/release.yml` now runs cosign keyless signing on every pushed tag, ships `dist/install.yaml` via `gh release upload`, and a new `helm-chart` job stamps the tag into Chart.yaml then `helm push`es to `oci://ghcr.io/donaldgifford/renovate-operator/charts`. `docker-bake.hcl` lives at the repo root with `default`/`ci`/`release` groups. CI metadata-action ref fixed (was a broken trailing slash). `test-e2e` gated on `paths:` filter.
+
+Phase 7 remaining: three full e2e scenarios (GitHub stub, Forgejo container, parallelism) — covered for v0.1.0 acceptance by `test/manual/README.md`.
+
+Phase 9 (homelab cutover) remains: cut a `v0.1.0-rc.1` tag, observe the release pipeline, then run the manual acceptance.
 
 ### Chart regeneration
 

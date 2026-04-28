@@ -2,7 +2,28 @@ name: E2E Tests
 
 on:
   push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "internal/**"
+      - "cmd/**"
+      - "dist/chart/**"
+      - "test/e2e/**"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
   pull_request:
+    paths:
+      - "api/**"
+      - "internal/**"
+      - "cmd/**"
+      - "dist/chart/**"
+      - "test/e2e/**"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
 
 jobs:
   test-e2e:
@@ -25,6 +46,11 @@ jobs:
 
       - name: Verify kind installation
         run: kind version
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
 
       - name: Running Test e2e
         run: |

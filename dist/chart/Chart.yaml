@@ -1,7 +1,29 @@
 apiVersion: v2
 name: renovate-operator
-description: A Helm chart to distribute the project renovate-operator
+description: |
+  Kubernetes operator running the Renovate CLI against multiple Git
+  platforms (GitHub.com, GitHub Enterprise, Forgejo, Gitea) via parallel
+  Indexed Jobs.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-icon: "https://example.com/icon.png"
+home: https://github.com/donaldgifford/renovate-operator
+sources:
+  - https://github.com/donaldgifford/renovate-operator
+maintainers:
+  - name: Donald Gifford
+    url: https://github.com/donaldgifford
+keywords:
+  - renovate
+  - dependencies
+  - github
+  - forgejo
+  - operator
+icon: https://raw.githubusercontent.com/renovatebot/renovate/main/docs/usage/assets/images/logo.png
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/donaldgifford/renovate-operator/blob/main/README.md
+    - name: Implementation plan
+      url: https://github.com/donaldgifford/renovate-operator/blob/main/docs/impl/0001-renovate-operator-v010-implementation.md
