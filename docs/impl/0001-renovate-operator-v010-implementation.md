@@ -158,7 +158,7 @@ Implements the `Client` interface for GitHub (App auth) and Forgejo (token), inc
 
 #### Tasks
 
-- [ ] `internal/platform/platform.go`: `Client` interface, `Repository`, `DiscoveryFilter`, error types (transient vs permanent).
+- [x] `internal/platform/platform.go`: `Client` interface, `Repository`, `DiscoveryFilter`, error types (transient vs permanent).
 - [ ] `internal/platform/github/`:
   - [ ] `client.go`: `go-github/v62` + `bradleyfalzon/ghinstallation/v2`; constructs an installation-scoped client from `GitHubAppAuth`.
   - [ ] `discover.go`: list repos via `/orgs/{org}/repos` paginated (Search API path is a future optimization — see [Resolved Q4](#q4--github-discovery-rest-list-vs-search-api)); apply `Filter`/`Topics`/`SkipForks`/`SkipArchived` server-side where possible, client-side otherwise.
