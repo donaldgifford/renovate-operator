@@ -106,10 +106,10 @@ Translate [DESIGN-0001 § Type definitions](../design/0001-renovate-operator-v0-
   - [x] `RenovatePlatformStatus`: conditions, `observedGeneration`.
   - [x] CEL `XValidation` markers on `Spec`/`Auth`: exactly-one-of `auth.{githubApp,token}`; `forgejo` ⇒ `token`; `forgejo` ⇒ `baseURL` non-empty.
   - [x] Printer columns: `Type`, `URL`, `Ready`, `Age`.
-- [ ] Replace placeholder fields in `renovatescan_types.go`:
-  - [ ] `RenovateScanSpec`: `platformRef`, `schedule`, `timeZone` (default UTC), `suspend`, `concurrencyPolicy` (default `Forbid`), `Workers{Min=1,Max=10,ReposPer=50,BackoffLimitPerIndex=2}`, `Discovery{Autodiscover=true,RequireConfig=true,Filter,Topics,SkipForks=true,SkipArchived=true}`, `renovateConfigOverrides` (preserved JSON), `extraEnv`, `resources`, `successfulRunsHistoryLimit=3`, `failedRunsHistoryLimit=1`.
-  - [ ] `RenovateScanStatus`: conditions (`Ready`, `Scheduled`), `lastRunTime`, `lastSuccessfulRunTime`, `nextRunTime`, `lastRunRef`, `activeRuns`, `observedGeneration`.
-  - [ ] Printer columns: `Platform`, `Schedule`, `Last Run`, `Next Run`, `Ready`, `Age`.
+- [x] Replace placeholder fields in `renovatescan_types.go`:
+  - [x] `RenovateScanSpec`: `platformRef`, `schedule`, `timeZone` (default UTC), `suspend`, `concurrencyPolicy` (default `Forbid`), `Workers{Min=1,Max=10,ReposPer=50,BackoffLimitPerIndex=2}`, `Discovery{Autodiscover=true,RequireConfig=true,Filter,Topics,SkipForks=true,SkipArchived=true}`, `renovateConfigOverrides` (preserved JSON), `extraEnv`, `resources`, `successfulRunsHistoryLimit=3`, `failedRunsHistoryLimit=1`.
+  - [x] `RenovateScanStatus`: conditions (`Ready`, `Scheduled`), `lastRunTime`, `lastSuccessfulRunTime`, `nextRunTime`, `lastRunRef`, `activeRuns`, `observedGeneration`.
+  - [x] Printer columns: `Platform`, `Schedule`, `Last Run`, `Next Run`, `Ready`, `Age`.
 - [ ] Replace placeholder fields in `renovaterun_types.go`:
   - [ ] `RenovateRunSpec`: `scanRef`, `platformSnapshot RenovatePlatformSpec`, `scanSnapshot RenovateScanSpec`.
   - [ ] `RenovateRunStatus`: conditions (`Started`, `Discovered`, `Succeeded`, `Failed`), `phase RunPhase`, lifecycle timestamps (`startTime`, `discoveryCompletionTime`, `workersStartTime`, `completionTime`), `discoveredRepos`, `actualWorkers`, `succeededShards`, `failedShards`, `shardConfigMapRef`, `workerJobRef`, `observedGeneration`.
