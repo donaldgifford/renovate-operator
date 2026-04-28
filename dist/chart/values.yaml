@@ -150,12 +150,13 @@ crd:
 prometheus:
   enable: false
 
-# [CERT-MANAGER] cert-manager is a deployment prerequisite for any future
-# webhook-bearing release; v0.1.0 ships no webhooks so this is off and the
-# scaffolded template is removed (see ADR-0006 / IMPL-0001 Q6).
-certmanager:
-  enable: false
-
 # [NETWORK POLICIES]
 networkPolicy:
   enable: false
+
+# cert-manager is a deployment prerequisite for any future webhook-bearing
+# release; v0.1.0 ships no webhooks so the scaffolded certmanager template
+# was removed (see ADR-0006 / IMPL-0001 Q6). When the helm/v1-alpha plugin
+# regenerates the chart it will re-emit dist/chart/templates/certmanager/
+# — run `make chart-clean` after `kubebuilder edit --plugins=helm/v1-alpha`
+# to re-strip it.

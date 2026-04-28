@@ -146,6 +146,21 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+.PHONY: chart-regenerate
+chart-regenerate: ## Regenerate dist/chart from kubebuilder helm/v1-alpha plugin and re-strip cert-manager scaffold.
+	kubebuilder edit --plugins=helm/v1-alpha --force
+	$(MAKE) chart-clean
+
+.PHONY: chart-clean
+chart-clean: ## Remove kubebuilder-scaffolded cert-manager template (re-emitted on every chart-regenerate; see ADR-0006).
+	rm -rf dist/chart/templates/certmanager
+	@echo "chart-clean: stripped dist/chart/templates/certmanager (v0.1.0 ships no webhooks)"
+
+.PHONY: chart-lint
+chart-lint: ## helm lint the operator chart (defaultScan.platformRef.name guard fires by default).
+	helm lint dist/chart
+	helm lint dist/chart --set defaultScan.enabled=false
+
 ##@ Deployment
 
 ifndef ignore-not-found
