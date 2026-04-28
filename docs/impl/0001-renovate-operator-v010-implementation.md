@@ -192,14 +192,14 @@ The bulk of the operator. Each controller gets its own file and envtest suite. B
   - [x] For Token: read token, validate non-empty.
   - [x] Set `Ready=True/False` with `Reason ∈ {CredentialsResolved, SecretNotFound, KeyMissing, AuthFailed}`.
   - [x] Watch Platform + Secret (operator-namespace predicate, mapped to Platforms whose auth refs match by name).
-- [ ] **Scan controller (`internal/controller/renovatescan_controller.go`)**:
-  - [ ] Parse cron via `robfig/cron/v3` against `spec.timeZone`; surface invalid as `Ready=False/Reason=InvalidSchedule`.
-  - [ ] Resolve `platformRef` → Platform; require `Ready=True`. Else `Ready=False/Reason=PlatformNotReady`, requeue 60s.
-  - [ ] Honor `suspend`; honor `concurrencyPolicy` against active Runs (`Forbid` → skip+requeue at next fire, `Allow` → always create, `Replace` → equivalent to Forbid + warning log per [DESIGN-0001 resolution #7](../design/0001-renovate-operator-v0-1-0.md#resolved-open-questions)).
-  - [ ] Create `RenovateRun` at fire time, snapshotting Platform spec + Scan spec into `spec.{platformSnapshot,scanSnapshot}`.
-  - [ ] GC old terminal Runs per `successfulRunsHistoryLimit`/`failedRunsHistoryLimit`.
-  - [ ] Set `Scheduled=True`, `RequeueAfter = nextRunTime - now` capped at 5m.
-  - [ ] Watches: Scan + Platform (mapped) + Run (owned).
+- [x] **Scan controller (`internal/controller/renovatescan_controller.go`)**:
+  - [x] Parse cron via `robfig/cron/v3` against `spec.timeZone`; surface invalid as `Ready=False/Reason=InvalidSchedule`.
+  - [x] Resolve `platformRef` → Platform; require `Ready=True`. Else `Ready=False/Reason=PlatformNotReady`, requeue 60s.
+  - [x] Honor `suspend`; honor `concurrencyPolicy` against active Runs (`Forbid` → skip+requeue at next fire, `Allow` → always create, `Replace` → equivalent to Forbid + warning log per [DESIGN-0001 resolution #7](../design/0001-renovate-operator-v0-1-0.md#resolved-open-questions)).
+  - [x] Create `RenovateRun` at fire time, snapshotting Platform spec + Scan spec into `spec.{platformSnapshot,scanSnapshot}`.
+  - [x] GC old terminal Runs per `successfulRunsHistoryLimit`/`failedRunsHistoryLimit`.
+  - [x] Set `Scheduled=True`, `RequeueAfter = nextRunTime - now` capped at 5m.
+  - [x] Watches: Scan + Platform (mapped) + Run (owned).
 - [ ] **Run controller (`internal/controller/renovaterun_controller.go`)** — state machine per [DESIGN-0001 § Reconciler: RenovateRun](../design/0001-renovate-operator-v0-1-0.md#reconciler-renovaterun):
   - [ ] `Pending` → `Discovering`: set startTime, set `Started=True`, instantiate platform client from snapshot, mirror credential Secret into Run's namespace.
   - [ ] `Discovering`: call `platform.Discover`, apply `requireConfig` filter (concurrency-bounded `errgroup`), compute `actualWorkers`, build shard ConfigMap, build worker Job, transition to `Running` with `Discovered=True`. Idempotent — survives controller crash mid-step.
