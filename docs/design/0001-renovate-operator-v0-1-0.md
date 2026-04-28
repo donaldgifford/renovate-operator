@@ -919,6 +919,21 @@ extend it with hand-edits in `dist/chart/templates/extra/` for things the
 generator doesn't cover (default `RenovateScan`, `ServiceMonitor`,
 `PrometheusRule` references).
 
+**Deployment prerequisites** (not bundled by the chart):
+
+- **cert-manager** is required for any future webhook-bearing release. v0.1.0
+  ships no webhooks, so cert-manager is *recommended* but not strictly
+  required; the kubebuilder-scaffolded `dist/chart/templates/certmanager/`
+  directory is stripped from v0.1.0 charts.
+- **Prometheus Operator** with kube-prometheus-stack defaults — the chart's
+  `metrics.serviceMonitor.additionalLabels` and
+  `metrics.prometheusRule.additionalLabels` default to
+  `{release: kube-prometheus-stack}` so resources are picked up
+  out-of-the-box. Override via Helm values for non-default Operator setups.
+- **Credential delivery** — 1Password Connect Operator (homelab) or External
+  Secrets Operator (production), populating the credential Secret in the
+  operator's release namespace.
+
 #### values.yaml (top-level surface)
 
 ```yaml
@@ -1018,7 +1033,7 @@ GitHub Actions workflows in `.github/workflows/`:
 | Workflow                                | Trigger           | Steps                                                                                                                                                                                                                                                                                                 |
 | --------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci.yaml`                               | PR, push to main  | golangci-lint → `make manifests generate helm` (drift check) → `go test ./...` (unit) → envtest → kind e2e                                                                                                                                                                                            |
-| `release.yaml`                          | Tag push (`v*`)   | Build multi-arch image (linux/amd64, linux/arm64) via `docker buildx` → push to `ghcr.io/donaldgifford/renovate-operator` → cosign sign → SBOM (syft) → Helm chart push to `oci://ghcr.io/donaldgifford/charts/renovate-operator` → `make build-installer` → attach plain manifests to GitHub release |
+| `release.yaml`                          | Tag push (`v*`)   | Build multi-arch image (linux/amd64, linux/arm64) via `docker buildx bake` (config in `docker-bake.hcl`) → push to `ghcr.io/donaldgifford/renovate-operator` → cosign sign → SBOM (syft) → Helm chart push to `oci://ghcr.io/donaldgifford/renovate-operator/charts` → `make build-installer` → attach plain manifests to GitHub release |
 | `nightly.yaml`                          | Cron 03:00 UTC    | Same as ci, but with extended e2e: full discovery against a live Forgejo sandbox + GitHub stub                                                                                                                                                                                                        |
 | `dependabot.yaml` (Renovate, of course) | Renovate webhooks | Dogfooding — operator's own deps managed by the operator running in homelab                                                                                                                                                                                                                           |
 

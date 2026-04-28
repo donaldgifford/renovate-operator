@@ -102,16 +102,16 @@ Registered via `controller-runtime`'s `metrics.Registry`:
 
 | Metric | Type | Labels | Use |
 |--------|------|--------|-----|
-| `renovate_scans_total` | Counter | `platform`, `namespace`, `result` | Scan reconciliation outcomes |
-| `renovate_runs_total` | Counter | `platform`, `scan_namespace`, `scan_name`, `phase` | Runs created, by terminal phase |
-| `renovate_run_duration_seconds` | Histogram | `platform`, `scan_namespace`, `scan_name`, `phase` | Run wall-clock per phase |
-| `renovate_run_repos_discovered` | Gauge | `platform`, `scan_namespace`, `scan_name` | Output of discovery, current Run |
-| `renovate_run_shard_count` | Gauge | `platform`, `scan_namespace`, `scan_name` | N value, current Run |
-| `renovate_run_workers_active` | Gauge | `platform`, `scan_namespace`, `scan_name` | Pods currently running |
-| `renovate_run_repos_processed_total` | Counter | `platform`, `scan_namespace`, `scan_name`, `result` | Per-repo outcomes (parsed from worker logs) |
-| `renovate_run_prs_opened_total` | Counter | `platform`, `scan_namespace`, `scan_name` | New PRs created (parsed from worker output) |
+| `renovate_scans_total` | Counter | `platform`, `result` | Scan reconciliation outcomes |
+| `renovate_runs_total` | Counter | `platform`, `scan`, `phase` | Runs created, by terminal phase |
+| `renovate_run_duration_seconds` | Histogram | `platform`, `scan`, `phase` | Run wall-clock per phase |
+| `renovate_run_repos_discovered` | Gauge | `platform`, `scan` | Output of discovery, current Run |
+| `renovate_run_shard_count` | Gauge | `platform`, `scan` | N value, current Run |
+| `renovate_run_workers_active` | Gauge | `platform`, `scan` | Pods currently running |
+| `renovate_run_repos_processed_total` | Counter | `platform`, `scan`, `result` | Per-repo outcomes (parsed from worker logs) |
+| `renovate_run_prs_opened_total` | Counter | `platform`, `scan` | New PRs created (parsed from worker output) |
 | `renovate_platform_ready` | Gauge (0/1) | `platform`, `platform_type` | Platform readiness |
-| `renovate_discovery_duration_seconds` | Histogram | `platform`, `scan_namespace`, `scan_name` | Discovery API call latency |
+| `renovate_discovery_duration_seconds` | Histogram | `platform`, `scan` | Discovery API call latency |
 | `renovate_discovery_api_calls_total` | Counter | `platform`, `result` | Platform API calls during discovery |
 
 #### Cardinality budget
