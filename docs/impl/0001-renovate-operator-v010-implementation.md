@@ -134,7 +134,7 @@ Side-effect-free helpers that the reconcilers will compose with. Should be 100%-
 
 #### Tasks
 
-- [ ] `internal/clock/clock.go`: thin wrapper around `k8s.io/utils/clock` so reconcilers and tests can swap implementations (`clock.Clock` interface, real + fake).
+- [x] `internal/clock/clock.go`: thin wrapper around `k8s.io/utils/clock` so reconcilers and tests can swap implementations (`clock.Clock` interface, real + fake).
 - [ ] `internal/conditions/conditions.go`: thin helpers around `meta.SetStatusCondition` for the condition types this project uses (so reconcilers don't repeat the same boilerplate). Lint should reject direct `append` to condition slices elsewhere.
 - [ ] `internal/sharding/shard_builder.go` (pure): given `[]Repository` + `WorkersSpec`, produce `actualWorkers` and the shard ConfigMap data (`shard-NNNN.json` keys, optional gzip+base64 above 900 KiB). Contract:
   - [ ] Round-robin assignment across `actualWorkers`.
