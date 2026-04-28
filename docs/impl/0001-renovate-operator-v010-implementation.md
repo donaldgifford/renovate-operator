@@ -114,9 +114,9 @@ Translate [DESIGN-0001 § Type definitions](../design/0001-renovate-operator-v0-
   - [x] `RenovateRunSpec`: `scanRef`, `platformSnapshot RenovatePlatformSpec`, `scanSnapshot RenovateScanSpec`.
   - [x] `RenovateRunStatus`: conditions (`Started`, `Discovered`, `Succeeded`, `Failed`), `phase RunPhase`, lifecycle timestamps (`startTime`, `discoveryCompletionTime`, `workersStartTime`, `completionTime`), `discoveredRepos`, `actualWorkers`, `succeededShards`, `failedShards`, `shardConfigMapRef`, `workerJobRef`, `observedGeneration`.
   - [x] Printer columns: `Scan`, `Phase`, `Repos`, `Workers`, `Started`, `Completed`.
-- [ ] Run `make manifests generate`; resolve any controller-gen warnings.
-- [ ] Add realistic example CRs to `config/samples/` (GitHub Platform, Forgejo Platform, a Scan, replacing the kubebuilder defaults). Verify `kubectl apply --dry-run=server -f config/samples/` succeeds against the installed CRDs.
-- [ ] `just lint` clean.
+- [x] Run `make manifests generate`; resolve any controller-gen warnings.
+- [x] Add realistic example CRs to `config/samples/` (GitHub Platform, Forgejo Platform, a Scan, replacing the kubebuilder defaults). Verify `kubectl apply --dry-run=server -f config/samples/` succeeds against the installed CRDs.
+- [x] `just lint` clean.
 
 #### Success Criteria
 

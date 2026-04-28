@@ -18,7 +18,7 @@ The v0.1.0 spec lives in `docs/`:
 
 Key locked decisions surfaced from those docs (so they don't get re-litigated):
 
-- **API group**: `renovate.fartlab.dev`. CRDs: `RenovatePlatform` (cluster), `RenovateScan` (namespaced), `RenovateRun` (namespaced, ephemeral, owned by Scan).
+- **API group**: `renovate.fartlab.dev`. CRDs: `RenovatePlatform` (cluster, `rp`/`rplatform`), `RenovateScan` (namespaced, `rscan` only — `rs` collides with the built-in `replicasets` shortname), `RenovateRun` (namespaced, ephemeral, owned by Scan, `rr`/`rrun`).
 - **Parallelism**: Indexed `batch/v1.Job`, `N = clamp(ceil(repos/reposPerWorker), minWorkers, maxWorkers)`. One Job per Run; one ConfigMap of shards owned by Run; cascade delete via owner refs.
 - **Auth**: GitHub App (`installationID` required, one Platform per installation) and Forgejo token. Renovate handles its own JWT minting; the operator only mints tokens for its own discovery API calls.
 - **Credentials**: Operator consumes a Secret in its release namespace and mirrors it into Scan namespaces per Run. The "how it gets there" is a deployment concern (1Password Connect for homelab, ESO for production).

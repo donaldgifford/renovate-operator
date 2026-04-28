@@ -24,7 +24,7 @@ import (
 // RenovatePlatformSpec defines the desired state of RenovatePlatform.
 //
 // +kubebuilder:validation:XValidation:rule="self.platformType != 'forgejo' || has(self.auth.token)",message="forgejo platforms require token auth"
-// +kubebuilder:validation:XValidation:rule="self.platformType != 'forgejo' || size(self.baseURL) > 0",message="forgejo platforms require baseURL"
+// +kubebuilder:validation:XValidation:rule="self.platformType != 'forgejo' || (has(self.baseURL) && size(self.baseURL) > 0)",message="forgejo platforms require baseURL"
 type RenovatePlatformSpec struct {
 	// PlatformType is the Renovate platform identifier.
 	PlatformType PlatformType `json:"platformType"`

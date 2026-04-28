@@ -323,7 +323,7 @@ search other namespaces for the secret).
 
 ```go
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:shortName=rs;rscan
+// +kubebuilder:resource:shortName=rscan
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Platform",type="string",JSONPath=".spec.platformRef.name"
 // +kubebuilder:printcolumn:name="Schedule",type="string",JSONPath=".spec.schedule"

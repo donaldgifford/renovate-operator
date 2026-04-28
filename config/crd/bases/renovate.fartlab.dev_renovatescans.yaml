@@ -12,7 +12,6 @@ spec:
     listKind: RenovateScanList
     plural: renovatescans
     shortNames:
-    - rs
     - rscan
     singular: renovatescan
   scope: Namespaced

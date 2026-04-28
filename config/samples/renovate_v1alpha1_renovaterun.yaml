@@ -1,9 +1,42 @@
+---
+# RenovateRun is normally created by the Scan controller, not by users.
+# This sample exists so kubectl apply --dry-run=server can validate the
+# CRD schema. PlatformSnapshot and ScanSnapshot mirror the parent specs at
+# Run creation time and are immutable for the lifetime of the Run.
 apiVersion: renovate.fartlab.dev/v1alpha1
 kind: RenovateRun
 metadata:
   labels:
-    app.kubernetes.io/name: kube
+    app.kubernetes.io/name: renovate-operator
     app.kubernetes.io/managed-by: kustomize
-  name: renovaterun-sample
+  name: nightly-20260428
+  namespace: renovate
 spec:
-  # TODO(user): Add fields here
+  scanRef:
+    name: nightly
+  platformSnapshot:
+    platformType: github
+    baseURL: https://api.github.com
+    auth:
+      githubApp:
+        appID: 123456
+        installationID: 67890123
+        privateKeyRef:
+          name: renovate-github-app
+          key: private-key.pem
+    renovateImage: ghcr.io/renovatebot/renovate:latest
+  scanSnapshot:
+    platformRef:
+      name: github
+    schedule: "0 2 * * *"
+    timeZone: America/New_York
+    concurrencyPolicy: Forbid
+    workers:
+      minWorkers: 1
+      maxWorkers: 5
+      reposPerWorker: 50
+    discovery:
+      autodiscover: true
+      requireConfig: true
+      filter:
+        - donaldgifford/*

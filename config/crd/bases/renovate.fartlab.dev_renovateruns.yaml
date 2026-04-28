@@ -182,7 +182,8 @@ spec:
                 - message: forgejo platforms require token auth
                   rule: self.platformType != 'forgejo' || has(self.auth.token)
                 - message: forgejo platforms require baseURL
-                  rule: self.platformType != 'forgejo' || size(self.baseURL) > 0
+                  rule: self.platformType != 'forgejo' || (has(self.baseURL) && size(self.baseURL)
+                    > 0)
               scanRef:
                 description: |-
                   ScanRef points at the parent RenovateScan in the same namespace. Set by

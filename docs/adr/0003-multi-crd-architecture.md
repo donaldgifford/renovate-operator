@@ -31,7 +31,7 @@ created: 2026-04-26
 
 ## Status
 
-Accepted — three CRDs scaffolded under `api/v1alpha1/`: `RenovatePlatform` (cluster-scoped, `rp`/`rplatform`), `RenovateScan` (namespaced, `rs`/`rscan`), `RenovateRun` (namespaced, `rr`/`rrun`). Status subresource on each. Spec/Status field shapes still placeholder (`Foo *string`); fields land in the next pass.
+Accepted — three CRDs scaffolded under `api/v1alpha1/`: `RenovatePlatform` (cluster-scoped, `rp`/`rplatform`), `RenovateScan` (namespaced, `rscan`; `rs` was dropped to avoid the `replicasets` built-in shortname conflict), `RenovateRun` (namespaced, `rr`/`rrun`). Status subresource on each. Spec/Status field shapes still placeholder (`Foo *string`); fields land in the next pass.
 
 ## Context
 
