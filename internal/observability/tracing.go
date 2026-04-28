@@ -54,10 +54,13 @@ func InitTracer(ctx context.Context, version string) (func(context.Context) erro
 		return noopShutdown, fmt.Errorf("otel: build OTLP gRPC exporter: %w", err)
 	}
 
+	// resource.Default()'s schema URL drifts with the SDK; merging a
+	// hard-pinned semconv schema produces a "conflicting Schema URL"
+	// error. resource.NewSchemaless skips the merge and lets the SDK
+	// stamp its own schema on the merged resource.
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
+		resource.NewSchemaless(
 			semconv.ServiceName(ServiceName),
 			semconv.ServiceVersion(version),
 		),

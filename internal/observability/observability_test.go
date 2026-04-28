@@ -37,6 +37,35 @@ func TestInitTracer_NoEndpointReturnsNoop(t *testing.T) {
 	}
 }
 
+func TestInitTracer_WithEndpointReturnsRealShutdown(t *testing.T) {
+	// otlptracegrpc.New is non-blocking — it doesn't dial until first
+	// export. Setting a localhost endpoint is enough to drive the happy
+	// path through resource.Merge + tracerprovider construction without
+	// actually requiring a running collector. Shutdown completes
+	// promptly because the batcher has no spans to flush.
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	shutdown, err := observability.InitTracer(ctx, "test-version")
+	if err != nil {
+		t.Fatalf("InitTracer err = %v", err)
+	}
+	if shutdown == nil {
+		t.Fatal("shutdown = nil")
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := shutdown(shutdownCtx); err != nil {
+		// A "context deadline" or "connection refused" on shutdown is fine
+		// — the test only validates that the construction path ran cleanly.
+		t.Logf("shutdown returned %v (acceptable for unit test without collector)", err)
+	}
+}
+
 func TestStartPprof_EmptyBindIsNoop(t *testing.T) {
 	t.Parallel()
 
