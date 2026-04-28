@@ -79,6 +79,9 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	var operatorNamespace string
+	flag.StringVar(&operatorNamespace, "operator-namespace", os.Getenv("POD_NAMESPACE"),
+		"Namespace where the operator's credential Secrets live. Defaults to $POD_NAMESPACE.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -192,9 +195,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if operatorNamespace == "" {
+		setupLog.Info("--operator-namespace not set and POD_NAMESPACE empty; defaulting to renovate-system")
+		operatorNamespace = "renovate-system"
+	}
+
 	if err := (&controller.RenovatePlatformReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorNamespace: operatorNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "RenovatePlatform")
 		os.Exit(1)
@@ -207,8 +216,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.RenovateRunReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorNamespace: operatorNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "RenovateRun")
 		os.Exit(1)

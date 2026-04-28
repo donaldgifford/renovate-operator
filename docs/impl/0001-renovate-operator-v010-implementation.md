@@ -207,7 +207,7 @@ The bulk of the operator. Each controller gets its own file and envtest suite. B
   - [x] Terminal phases: no further work; rely on parent Scan's history-limit GC.
   - [x] Watches: Run + owned Job + owned ConfigMap + owned Secret.
 - [x] Cluster RBAC markers (`+kubebuilder:rbac:...`) per controller; `make manifests` regenerates `config/rbac/role.yaml` with secrets / configmaps / batch.jobs full verbs for the Run controller's mirror + ConfigMap + Job ops.
-- [ ] Wire the three controllers into `cmd/main.go`'s manager, with the existing kubebuilder leader-election defaults.
+- [x] Wire the three controllers into `cmd/main.go`'s manager, with the existing kubebuilder leader-election defaults. New `--operator-namespace` flag (defaults to `$POD_NAMESPACE`, fallback `renovate-system`) feeds Platform + Run reconcilers' source-Secret resolution.
 
 #### Success Criteria
 
