@@ -22,6 +22,9 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +40,7 @@ import (
 	"github.com/donaldgifford/renovate-operator/internal/conditions"
 	"github.com/donaldgifford/renovate-operator/internal/credentials"
 	"github.com/donaldgifford/renovate-operator/internal/jobspec"
+	"github.com/donaldgifford/renovate-operator/internal/observability"
 	"github.com/donaldgifford/renovate-operator/internal/platform"
 	"github.com/donaldgifford/renovate-operator/internal/sharding"
 )
@@ -82,12 +86,31 @@ func (r *RenovateRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		r.PlatformClientFactory = DefaultPlatformClientFactory()
 	}
 
+	ctx, span := observability.Tracer().Start(ctx, "RenovateRun.Reconcile",
+		trace.WithAttributes(
+			attribute.String("run.namespace", req.Namespace),
+			attribute.String("run.name", req.Name),
+		),
+	)
+	defer span.End()
+
 	var run renovatev1alpha1.RenovateRun
 	if err := r.Get(ctx, req.NamespacedName, &run); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	span.SetAttributes(
+		attribute.String("scan", run.Spec.ScanRef.Name),
+		attribute.String("platform", string(run.Spec.PlatformSnapshot.PlatformType)),
+		attribute.String("phase.in", string(run.Status.Phase)),
+	)
+
 	result, err := r.reconcile(ctx, &run)
+	span.SetAttributes(attribute.String("phase.out", string(run.Status.Phase)))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
 	if updateErr := r.Status().Update(ctx, &run); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			log.V(1).Info("status conflict, requeueing", "run", req.String())
@@ -124,6 +147,9 @@ func (r *RenovateRunReconciler) reconcile(ctx context.Context, run *renovatev1al
 // when requireConfig), computes ActualWorkers, creates the shard ConfigMap +
 // worker Job, and transitions to Running.
 func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *renovatev1alpha1.RenovateRun) (ctrl.Result, error) {
+	ctx, span := observability.Tracer().Start(ctx, "RenovateRun.DiscoverAndDispatch")
+	defer span.End()
+
 	now := r.Clock.Now()
 	if run.Status.StartTime == nil {
 		run.Status.StartTime = &metav1.Time{Time: now}
@@ -135,19 +161,23 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 
 	mirrored, err := r.mirrorCredential(ctx, run)
 	if err != nil {
+		span.RecordError(err)
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
 
 	srcSecret := mirrored
 	plat, err := r.PlatformClientFactory(ctx, run.Spec.PlatformSnapshot, srcSecret)
 	if err != nil {
+		span.RecordError(err)
 		return r.markFailed(run, "platform client init: "+err.Error())
 	}
 
 	repos, err := r.discoverRepos(ctx, run, plat)
 	if err != nil {
+		span.RecordError(err)
 		return r.handleDiscoverErr(run, err)
 	}
+	span.SetAttributes(attribute.Int("discovered.repos", len(repos)))
 
 	if len(repos) == 0 {
 		return r.markFailed(run, "no repositories matched discovery filter")
@@ -192,6 +222,9 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 // observeJob handles Running: reads the owned Job and transitions to Succeeded
 // or Failed when terminal.
 func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1alpha1.RenovateRun) (ctrl.Result, error) {
+	ctx, span := observability.Tracer().Start(ctx, "RenovateRun.ObserveJob")
+	defer span.End()
+
 	if run.Status.WorkerJobRef == nil {
 		return r.markFailed(run, "running phase without WorkerJobRef")
 	}
@@ -201,11 +234,16 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 		if apierrors.IsNotFound(err) {
 			return r.markFailed(run, "worker Job vanished before completion")
 		}
+		span.RecordError(err)
 		return ctrl.Result{}, fmt.Errorf("get job: %w", err)
 	}
 
 	run.Status.SucceededShards = job.Status.Succeeded
 	run.Status.FailedShards = job.Status.Failed
+	span.SetAttributes(
+		attribute.Int64("job.succeeded", int64(job.Status.Succeeded)),
+		attribute.Int64("job.failed", int64(job.Status.Failed)),
+	)
 
 	completions := int32(1)
 	if job.Spec.Completions != nil {
@@ -237,6 +275,14 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 }
 
 func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovatev1alpha1.RenovateRun, plat platform.Client) ([]platform.Repository, error) {
+	ctx, span := observability.Tracer().Start(ctx, "platform.Discover",
+		trace.WithAttributes(
+			attribute.String("platform", string(run.Spec.PlatformSnapshot.PlatformType)),
+			attribute.String("owner", r.discoveryOwner(run)),
+		),
+	)
+	defer span.End()
+
 	owner := r.discoveryOwner(run)
 	filter := platform.DiscoveryFilter{
 		Owner:        owner,
@@ -247,21 +293,31 @@ func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovate
 	}
 	all, err := plat.Discover(ctx, filter)
 	if err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
+	span.SetAttributes(attribute.Int("repos.found", len(all)))
 	if !run.Spec.ScanSnapshot.Discovery.RequireConfig {
 		return all, nil
 	}
+
+	probeCtx, probeSpan := observability.Tracer().Start(ctx, "platform.HasRenovateConfig.batch",
+		trace.WithAttributes(attribute.Int("repos.candidates", len(all))),
+	)
 	out := make([]platform.Repository, 0, len(all))
 	for _, repo := range all {
-		ok, err := plat.HasRenovateConfig(ctx, repo)
+		ok, err := plat.HasRenovateConfig(probeCtx, repo)
 		if err != nil {
+			probeSpan.RecordError(err)
+			probeSpan.End()
 			return nil, err
 		}
 		if ok {
 			out = append(out, repo)
 		}
 	}
+	probeSpan.SetAttributes(attribute.Int("repos.with_config", len(out)))
+	probeSpan.End()
 	return out, nil
 }
 
@@ -399,6 +455,11 @@ func (r *RenovateRunReconciler) ensureShardConfigMap(ctx context.Context, run *r
 }
 
 func (r *RenovateRunReconciler) ensureWorkerJob(ctx context.Context, run *renovatev1alpha1.RenovateRun, mirrored *corev1.Secret, cm *corev1.ConfigMap, actualWorkers int32) (*batchv1.Job, error) {
+	ctx, span := observability.Tracer().Start(ctx, "RenovateRun.EnsureWorkerJob",
+		trace.WithAttributes(attribute.Int64("workers", int64(actualWorkers))),
+	)
+	defer span.End()
+
 	cred := jobspec.CredentialMount{SecretName: mirrored.Name}
 	switch {
 	case run.Spec.PlatformSnapshot.Auth.GitHubApp != nil:

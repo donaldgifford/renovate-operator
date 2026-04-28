@@ -233,7 +233,7 @@ Metrics, tracing, logging bridge, pprof. Wired to the manager so they're alive f
 - [x] `internal/observability/logbridge.go`: `LogrFromContext` wrapper that pulls the active span from the reconcile context and adds `trace_id` / `span_id` keys.
 - [x] `internal/observability/pprof.go`: `net/http/pprof` mux on `--pprof-bind-address` (empty disables); off by default.
 - [x] Wire all four into `cmd/main.go`. Health/readiness endpoints (kubebuilder defaults at `:8081`) stay as-is.
-- [ ] Add tracing spans to hot paths: `Discover`, `HasRenovateConfig` batch, `BuildWorkerJob`, the Run state transitions. **Deferred** — primitives are in place, instrumenting hot paths is additive and can land separately without blocking Phase 6/7.
+- [x] Add tracing spans to hot paths: `RenovateRun.Reconcile` (with `scan`, `platform`, `phase.in`/`phase.out` attrs and `codes.Error` on failure), `RenovateRun.DiscoverAndDispatch`, `platform.Discover` (carrying `platform`/`owner` and `repos.found`), `platform.HasRenovateConfig.batch` (with `repos.candidates`/`repos.with_config`), `RenovateRun.EnsureWorkerJob` (with `workers` count covering BuildWorkerJob), and `RenovateRun.ObserveJob` (with `job.succeeded`/`job.failed`). All routed through `observability.Tracer()`; the default no-op TracerProvider keeps these zero-cost when InitTracer hasn't been called.
 
 #### Success Criteria
 
