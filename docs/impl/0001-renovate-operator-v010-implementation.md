@@ -284,7 +284,7 @@ Unit + envtest layered tests are landed throughout phases 1–5. This phase is t
   - [ ] **Parallelism e2e**: 200 stub repos, `maxWorkers: 5`, `reposPerWorker: 50` ⇒ assert `actualWorkers == 4`, all 200 in shard ConfigMap, Job parallelism 4.
 - [ ] `test/manual/README.md` with the steps for the homelab `donaldgifford/server-price-tracker` and Forgejo manual runs.
 - [ ] `just ci` composite gate stays green: lint + test + build + license-check.
-- [ ] Coverage gate: target ≥ 80% on `internal/controller/...`, `internal/platform/...`, `internal/sharding/...`, `internal/jobspec/...`. Current state from `make test-coverage` (2026-04-26): `clock 100%`, `conditions 100%`, `controller 17.2%` ❌, `credentials 97.6%`, `jobspec 92.7%` ✓, `observability 57.1%`, `platform 100%`, `platform/forgejo 75.0%` ❌, `platform/github 70.3%` ❌, `sharding 92.0%` ✓. Controller coverage is the biggest gap; the platform clients need a few more error-path tests.
+- [x] Coverage gate: target ≥ 80% on `internal/controller/...`, `internal/platform/...`, `internal/sharding/...`, `internal/jobspec/...`. Latest from `make test-coverage` (2026-04-26): `clock 100%`, `conditions 100%`, `controller 82.8%` ✓, `credentials 97.6%`, `jobspec 92.7%` ✓, `observability 57.1%`, `platform 100%` ✓, `platform/forgejo 90.4%` ✓, `platform/github 84.8%` ✓, `sharding 92.0%` ✓. Lifted by fake.NewClientBuilder() tests for the IO helpers (mirrorCredential, ensureShardConfigMap, ensureWorkerJob, observeJob, refreshActiveRuns, gcOldRuns, createRun, scansForPlatform, platformsForSecret) plus targeted client-option tests for the platform SDKs.
 
 #### Success Criteria
 
