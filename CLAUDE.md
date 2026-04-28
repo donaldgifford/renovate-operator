@@ -64,8 +64,13 @@ Tracked in [`docs/impl/0001-renovate-operator-v010-implementation.md`](docs/impl
 - Phase 1 (API surface): three CRDs filled in with full schemas, CEL validation rules, printer columns; samples validated against a kind cluster.
 - Phase 2 (pure builders): `internal/clock`, `internal/conditions`, `internal/sharding`, `internal/jobspec`, `internal/credentials`. Aggregate coverage ~94%; only unreachable defensive paths (JSON marshal of static structs, gzip writes into bytes.Buffer) are uncovered.
 - Phase 3 (platform clients): `internal/platform.Client` interface plus `internal/platform/github` (go-github/v62 + ghinstallation/v2) and `internal/platform/forgejo` (code.gitea.io/sdk/gitea). Per-instance `golang.org/x/time/rate` token bucket per Q2 sizing. classifyErr maps both clients onto shared `ErrTransient`/`ErrPermanent`/`ErrUnauthorized`/`ErrNotFound`/`*RateLimitedError`. Tested with httptest fakes (VCR was dropped — see IMPL-0001 Phase 3.4 note).
+- Phase 4 (reconcilers): all three controllers wired up:
+  - `RenovatePlatform`: resolves credential Secret in operator namespace, validates PEM/token, surfaces Ready condition. Watches Platform + Secret.
+  - `RenovateScan`: parses cron via robfig/cron/v3, resolves Platform, creates Run with frozen snapshots at fire time, GCs old terminal Runs, surfaces Scheduled condition. Watches Scan + Platform (mapped) + Run (owned).
+  - `RenovateRun`: state machine Pending → Discovering → Running → {Succeeded, Failed}; mirrors credential Secret, builds shard ConfigMap and worker Job. Watches Run + owned Job + ConfigMap + Secret. Pluggable `PlatformClientFactory` for tests.
+  - `cmd/main.go` wires all three with new `--operator-namespace` flag (defaults to `$POD_NAMESPACE`, falls back to `renovate-system`).
 
-Reconcilers (Phase 4) depend on these builders + clients. Don't import controller-runtime from the builder packages — they stay pure. The platform clients live one level up so reconcilers depend on the `Client` interface.
+Phase 5 (observability), Phase 6 (helm), Phase 7 (testing depth), Phase 8 (CI/release), Phase 9 (homelab cutover) remain.
 
 ## Known stale things to fix when convenient
 
