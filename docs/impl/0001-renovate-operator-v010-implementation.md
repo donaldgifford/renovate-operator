@@ -99,7 +99,7 @@ Translate [DESIGN-0001 § Type definitions](../design/0001-renovate-operator-v0-
 
 #### Tasks
 
-- [ ] Create `api/v1alpha1/shared_types.go` with `SecretKeyReference`, `LocalObjectReference`, `ConcurrencyPolicy`, `PlatformType` (constants `github`, `forgejo`), `RunPhase` (constants `Pending`/`Discovering`/`Running`/`Succeeded`/`Failed`).
+- [x] Create `api/v1alpha1/shared_types.go` with `SecretKeyReference`, `LocalObjectReference`, `ConcurrencyPolicy`, `PlatformType` (constants `github`, `forgejo`), `RunPhase` (constants `Pending`/`Discovering`/`Running`/`Succeeded`/`Failed`).
 - [ ] Replace placeholder fields in `renovateplatform_types.go`:
   - [ ] `RenovatePlatformSpec`: `platformType`, `baseURL`, `auth` (`PlatformAuth` discriminated union), `runnerConfig` (`*runtime.RawExtension` with `+kubebuilder:pruning:PreserveUnknownFields`), `presetRepoRef`, `renovateImage` (default per [Resolved Q1](#q1--renovate-image-version-pin)).
   - [ ] `PlatformAuth` with `GitHubApp` (App ID, required `installationID`, PEM secret ref) and `Token` (token secret ref).
