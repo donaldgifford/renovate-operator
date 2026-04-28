@@ -163,10 +163,10 @@ Implements the `Client` interface for GitHub (App auth) and Forgejo (token), inc
   - [x] `client.go`: `go-github/v62` + `bradleyfalzon/ghinstallation/v2`; constructs an installation-scoped client from `GitHubAppAuth`. PAT auth via custom `tokenTransport`. Per-installation `golang.org/x/time/rate` token bucket sized per [Resolved Q2](#q2--rate-limiter-sizing); GitHub's primary `RateLimitError`, secondary `AbuseRateLimitError`, and 429 responses all classify to `*platform.RateLimitedError` (which unwraps to `ErrTransient`). 401/403 → `ErrUnauthorized`; 404 → `ErrNotFound`; 5xx → `ErrTransient`.
   - [x] `discover.go`: list repos via `/orgs/{org}/repos` paginated (Search API path is a future optimization — see [Resolved Q4](#q4--github-discovery-rest-list-vs-search-api)); falls back to `/users/{user}/repos` on 404 for personal accounts. Filter/Topics/SkipForks/SkipArchived applied client-side (matches Renovate autodiscover semantics).
   - [x] `has_config.go`: contents-API check across the five `platform.ConfigPaths`; first 200 wins, 404s fall through, any other error short-circuits.
-- [ ] `internal/platform/forgejo/`:
-  - [ ] `client.go`: `code.gitea.io/sdk/gitea`; token-authenticated.
-  - [ ] `discover.go`: `/orgs/{org}/repos` paginated; same filter handling.
-  - [ ] `has_config.go`: contents API equivalent.
+- [x] `internal/platform/forgejo/`:
+  - [x] `client.go`: `code.gitea.io/sdk/gitea`; token-authenticated. 30 req/sec rate limiter per Resolved Q2; same classifyErr → ErrTransient/ErrPermanent/ErrUnauthorized/ErrNotFound mapping as the GitHub client.
+  - [x] `discover.go`: `/api/v1/orgs/{owner}/repos` paginated with /users/{user}/repos fallback on 404. Skip-forks/skip-archived + glob patterns applied client-side; topics deferred (Forgejo SDK doesn't surface topics on the repo struct).
+  - [x] `has_config.go`: contents API probe across `platform.ConfigPaths`; same first-hit-wins shape as GitHub.
 - [ ] `dnaeon/go-vcr` fixtures under `internal/platform/{github,forgejo}/testdata/` covering: happy path (≥ 50 repos paginated), 404 on `HasRenovateConfig`, 401/403 auth failure, 429/secondary rate limit with retry-after, malformed JSON.
 - [ ] Unit tests against the VCR fixtures for both clients.
 
