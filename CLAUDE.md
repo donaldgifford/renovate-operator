@@ -63,8 +63,9 @@ Tracked in [`docs/impl/0001-renovate-operator-v010-implementation.md`](docs/impl
 
 - Phase 1 (API surface): three CRDs filled in with full schemas, CEL validation rules, printer columns; samples validated against a kind cluster.
 - Phase 2 (pure builders): `internal/clock`, `internal/conditions`, `internal/sharding`, `internal/jobspec`, `internal/credentials`. Aggregate coverage ~94%; only unreachable defensive paths (JSON marshal of static structs, gzip writes into bytes.Buffer) are uncovered.
+- Phase 3 (platform clients): `internal/platform.Client` interface plus `internal/platform/github` (go-github/v62 + ghinstallation/v2) and `internal/platform/forgejo` (code.gitea.io/sdk/gitea). Per-instance `golang.org/x/time/rate` token bucket per Q2 sizing. classifyErr maps both clients onto shared `ErrTransient`/`ErrPermanent`/`ErrUnauthorized`/`ErrNotFound`/`*RateLimitedError`. Tested with httptest fakes (VCR was dropped — see IMPL-0001 Phase 3.4 note).
 
-Reconcilers (Phase 4) depend on these builders + the platform clients (Phase 3). Don't import controller-runtime from the builder packages — they stay pure.
+Reconcilers (Phase 4) depend on these builders + clients. Don't import controller-runtime from the builder packages — they stay pure. The platform clients live one level up so reconcilers depend on the `Client` interface.
 
 ## Known stale things to fix when convenient
 
