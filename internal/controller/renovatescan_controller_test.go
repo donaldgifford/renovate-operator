@@ -21,64 +21,76 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 )
 
 var _ = Describe("RenovateScan Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		const resourceName = "test-scan"
+		const platformName = "scan-test-platform"
+		const namespace = "default"
 
 		ctx := context.Background()
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		renovatescan := &renovatev1alpha1.RenovateScan{}
+		scanKey := types.NamespacedName{Name: resourceName, Namespace: namespace}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind RenovateScan")
-			err := k8sClient.Get(ctx, typeNamespacedName, renovatescan)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &renovatev1alpha1.RenovateScan{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
+			By("creating the parent Platform")
+			platform := &renovatev1alpha1.RenovatePlatform{
+				ObjectMeta: metav1.ObjectMeta{Name: platformName},
+				Spec: renovatev1alpha1.RenovatePlatformSpec{
+					PlatformType: renovatev1alpha1.PlatformTypeForgejo,
+					BaseURL:      "https://forgejo.example.com",
+					Auth: renovatev1alpha1.PlatformAuth{
+						Token: &renovatev1alpha1.TokenAuth{
+							SecretRef: renovatev1alpha1.SecretKeyReference{Name: "scan-test-creds"},
+						},
 					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				},
+			}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: platformName}, &renovatev1alpha1.RenovatePlatform{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, platform)).To(Succeed())
+			}
+
+			By("creating the Scan")
+			scan := &renovatev1alpha1.RenovateScan{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
+				Spec: renovatev1alpha1.RenovateScanSpec{
+					PlatformRef: renovatev1alpha1.LocalObjectReference{Name: platformName},
+					Schedule:    "0 2 * * *",
+				},
+			}
+			err = k8sClient.Get(ctx, scanKey, &renovatev1alpha1.RenovateScan{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, scan)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &renovatev1alpha1.RenovateScan{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance RenovateScan")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &RenovateScanReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+			By("cleanup Scan")
+			scan := &renovatev1alpha1.RenovateScan{}
+			if err := k8sClient.Get(ctx, scanKey, scan); err == nil {
+				Expect(k8sClient.Delete(ctx, scan)).To(Succeed())
 			}
+			By("cleanup Platform")
+			p := &renovatev1alpha1.RenovatePlatform{ObjectMeta: metav1.ObjectMeta{Name: platformName}}
+			_ = k8sClient.Delete(ctx, p)
+			By("cleanup Secret")
+			s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "scan-test-creds", Namespace: operatorTestNamespace}}
+			_ = k8sClient.Delete(ctx, s)
+		})
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+		It("scaffolded reconcile is a no-op", func() {
+			r := &RenovateScanReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: scanKey})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})
 })

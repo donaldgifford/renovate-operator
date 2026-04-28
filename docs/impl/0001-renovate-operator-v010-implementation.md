@@ -186,12 +186,12 @@ The bulk of the operator. Each controller gets its own file and envtest suite. B
 
 #### Tasks
 
-- [ ] **Platform controller (`internal/controller/renovateplatform_controller.go`)**:
-  - [ ] Resolve Secret in operator namespace (driven by `auth.{githubApp.privateKeyRef,token.secretRef}`).
-  - [ ] For GitHubApp: parse PEM, mint JWT, hit `/app` for a health check.
-  - [ ] For Token: read token, optionally hit a no-op API call.
-  - [ ] Set `Ready=True/False` with `Reason ∈ {CredentialsResolved, SecretNotFound, KeyMissing, AuthFailed, PlatformUnreachable}`.
-  - [ ] Watch Platform + Secret (mapped to Platforms whose auth refs match).
+- [x] **Platform controller (`internal/controller/renovateplatform_controller.go`)**:
+  - [x] Resolve Secret in operator namespace (driven by `auth.{githubApp.privateKeyRef,token.secretRef}`).
+  - [x] For GitHubApp: PEM-parse the private key (PKCS1 or PKCS8); JWT minting + `/app` health-check deferred to a v0.2 hardening pass — the Run controller's actual API calls catch a bad key.
+  - [x] For Token: read token, validate non-empty.
+  - [x] Set `Ready=True/False` with `Reason ∈ {CredentialsResolved, SecretNotFound, KeyMissing, AuthFailed}`.
+  - [x] Watch Platform + Secret (operator-namespace predicate, mapped to Platforms whose auth refs match by name).
 - [ ] **Scan controller (`internal/controller/renovatescan_controller.go`)**:
   - [ ] Parse cron via `robfig/cron/v3` against `spec.timeZone`; surface invalid as `Ready=False/Reason=InvalidSchedule`.
   - [ ] Resolve `platformRef` → Platform; require `Ready=True`. Else `Ready=False/Reason=PlatformNotReady`, requeue 60s.

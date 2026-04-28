@@ -22,63 +22,62 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 )
 
 var _ = Describe("RenovateRun Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		const runName = "test-run"
+		const namespace = "default"
 
 		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		renovaterun := &renovatev1alpha1.RenovateRun{}
+		runKey := types.NamespacedName{Name: runName, Namespace: namespace}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind RenovateRun")
-			err := k8sClient.Get(ctx, typeNamespacedName, renovaterun)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &renovatev1alpha1.RenovateRun{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
+			By("creating a minimal Run snapshot")
+			run := &renovatev1alpha1.RenovateRun{
+				ObjectMeta: metav1.ObjectMeta{Name: runName, Namespace: namespace},
+				Spec: renovatev1alpha1.RenovateRunSpec{
+					ScanRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+					PlatformSnapshot: renovatev1alpha1.RenovatePlatformSpec{
+						PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
+						RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+						Auth: renovatev1alpha1.PlatformAuth{
+							GitHubApp: &renovatev1alpha1.GitHubAppAuth{
+								AppID:          1,
+								InstallationID: 1,
+								PrivateKeyRef:  renovatev1alpha1.SecretKeyReference{Name: "creds"},
+							},
+						},
 					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+					ScanSnapshot: renovatev1alpha1.RenovateScanSpec{
+						PlatformRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+						Schedule:    "0 2 * * *",
+					},
+				},
+			}
+			err := k8sClient.Get(ctx, runKey, &renovatev1alpha1.RenovateRun{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, run)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &renovatev1alpha1.RenovateRun{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance RenovateRun")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &RenovateRunReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+			By("cleanup Run")
+			run := &renovatev1alpha1.RenovateRun{}
+			if err := k8sClient.Get(ctx, runKey, run); err == nil {
+				Expect(k8sClient.Delete(ctx, run)).To(Succeed())
 			}
+		})
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+		It("scaffolded reconcile is a no-op", func() {
+			r := &RenovateRunReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: runKey})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})
 })
