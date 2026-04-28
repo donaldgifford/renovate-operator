@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -262,6 +263,93 @@ func TestRunReconcile_RequireConfigFiltersRepos(t *testing.T) {
 		types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, got)
 	if got.Status.DiscoveredRepos != 1 {
 		t.Errorf("discoveredRepos = %d, want 1", got.Status.DiscoveredRepos)
+	}
+}
+
+func TestRunReconcile_Parallelism_200ReposCapsAtMaxWorkers(t *testing.T) {
+	t.Parallel()
+	// 200 repos / 50 reposPerWorker = 4 workers, well under maxWorkers=5.
+	// IMPL-0001 Phase 7 parallelism scenario: actualWorkers == 4, the shard
+	// ConfigMap holds all 200, Job parallelism == 4.
+	run, src := runFixture("parallelism", "team-ns", "renovate-system")
+	run.Spec.ScanSnapshot.Workers = renovatev1alpha1.WorkersSpec{
+		MinWorkers:     1,
+		MaxWorkers:     5,
+		ReposPerWorker: 50,
+	}
+
+	repos := make([]platform.Repository, 200)
+	for i := range repos {
+		repos[i] = platform.Repository{Slug: fmt.Sprintf("team-ns/repo-%03d", i)}
+	}
+	plat := &stubPlatformClient{repos: repos}
+	r := newRunReconciler(t, plat, run, src)
+
+	if _, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		t.Fatalf("Reconcile err = %v", err)
+	}
+
+	got := &renovatev1alpha1.RenovateRun{}
+	_ = r.Get(context.Background(),
+		types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, got)
+	if got.Status.DiscoveredRepos != 200 {
+		t.Errorf("DiscoveredRepos = %d, want 200", got.Status.DiscoveredRepos)
+	}
+	if got.Status.ActualWorkers != 4 {
+		t.Errorf("ActualWorkers = %d, want 4 (200 repos / 50 perWorker, capped at maxWorkers=5)",
+			got.Status.ActualWorkers)
+	}
+
+	// Shard ConfigMap should hold every repo across its 4 shards.
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-shards"}, cm); err != nil {
+		t.Fatalf("shard CM: %v", err)
+	}
+	if len(cm.Data) != 4 {
+		t.Errorf("shard CM has %d entries, want 4", len(cm.Data))
+	}
+
+	// Job parallelism + completions both equal actualWorkers (Indexed Job).
+	job := &batchv1.Job{}
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Namespace: run.Namespace, Name: got.Status.WorkerJobRef.Name}, job); err != nil {
+		t.Fatalf("worker Job: %v", err)
+	}
+	if job.Spec.Parallelism == nil || *job.Spec.Parallelism != 4 {
+		t.Errorf("Job.Parallelism = %v, want 4", job.Spec.Parallelism)
+	}
+	if job.Spec.Completions == nil || *job.Spec.Completions != 4 {
+		t.Errorf("Job.Completions = %v, want 4", job.Spec.Completions)
+	}
+}
+
+func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
+	t.Parallel()
+	// 10 repos / 50 reposPerWorker = 1 worker by ceil; minWorkers=2 lifts to 2.
+	run, src := runFixture("min-clamp", "team-ns", "renovate-system")
+	run.Spec.ScanSnapshot.Workers = renovatev1alpha1.WorkersSpec{
+		MinWorkers:     2,
+		MaxWorkers:     5,
+		ReposPerWorker: 50,
+	}
+	repos := make([]platform.Repository, 10)
+	for i := range repos {
+		repos[i] = platform.Repository{Slug: fmt.Sprintf("team-ns/repo-%02d", i)}
+	}
+	plat := &stubPlatformClient{repos: repos}
+	r := newRunReconciler(t, plat, run, src)
+
+	if _, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		t.Fatalf("Reconcile err = %v", err)
+	}
+	got := &renovatev1alpha1.RenovateRun{}
+	_ = r.Get(context.Background(),
+		types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, got)
+	if got.Status.ActualWorkers != 2 {
+		t.Errorf("ActualWorkers = %d, want 2 (clamped to minWorkers)", got.Status.ActualWorkers)
 	}
 }
 
