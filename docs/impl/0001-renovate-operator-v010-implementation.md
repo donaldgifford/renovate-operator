@@ -224,16 +224,16 @@ Metrics, tracing, logging bridge, pprof. Wired to the manager so they're alive f
 
 #### Tasks
 
-- [ ] `internal/observability/metrics.go`: register custom collectors per [DESIGN-0001 § Metrics](../design/0001-renovate-operator-v0-1-0.md#metrics) on controller-runtime's `metrics.Registry`. Includes:
-  - [ ] Counters: `renovate_operator_runs_total{scan,platform,result}`, `renovate_operator_discovery_errors_total{scan,platform}`, `renovate_operator_shards_failed_total{scan,platform}`.
-  - [ ] Histograms: `renovate_operator_run_duration_seconds{scan,platform}`, `renovate_operator_discovery_duration_seconds{scan,platform}`.
-  - [ ] Gauges: `renovate_operator_active_runs{scan,platform}`, `renovate_run_shard_count{scan,platform}`.
-  - [ ] Label set is `{scan, platform, result}` only — **no `scan_namespace`** per [Resolved Q3](#q3--metric-label-cardinality).
-- [ ] `internal/observability/tracing.go`: `InitTracer(ctx, version)` that returns a no-op shutdown when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset; otherwise builds an OTLP gRPC exporter + sdktrace TracerProvider.
-- [ ] `internal/observability/logbridge.go`: `logr.LogSink` wrapper that pulls the active span from the reconcile context and adds `trace_id` / `span_id` keys.
-- [ ] `internal/observability/pprof.go`: `net/http/pprof` mux on `:8082` behind a `--pprof-bind-address` flag; off by default.
-- [ ] Wire all four into `cmd/main.go`. Health/readiness endpoints (kubebuilder defaults at `:8081`) stay as-is.
-- [ ] Add tracing spans to hot paths: `Discover`, `HasRenovateConfig` batch, `BuildWorkerJob`, the Run state transitions.
+- [x] `internal/observability/metrics.go`: register custom collectors per [DESIGN-0001 § Metrics](../design/0001-renovate-operator-v0-1-0.md#metrics) on controller-runtime's `metrics.Registry`. Includes:
+  - [x] Counters: `renovate_operator_runs_total{scan,platform,result}`, `renovate_operator_discovery_errors_total{scan,platform}`, `renovate_operator_shards_failed_total{scan,platform}`.
+  - [x] Histograms: `renovate_operator_run_duration_seconds{scan,platform}`, `renovate_operator_discovery_duration_seconds{scan,platform}`.
+  - [x] Gauges: `renovate_operator_active_runs{scan,platform}`, `renovate_run_shard_count{scan,platform}`.
+  - [x] Label set is `{scan, platform, result}` only — **no `scan_namespace`** per [Resolved Q3](#q3--metric-label-cardinality).
+- [x] `internal/observability/tracing.go`: `InitTracer(ctx, version)` that returns a no-op shutdown when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset; otherwise builds an OTLP gRPC exporter + sdktrace TracerProvider.
+- [x] `internal/observability/logbridge.go`: `LogrFromContext` wrapper that pulls the active span from the reconcile context and adds `trace_id` / `span_id` keys.
+- [x] `internal/observability/pprof.go`: `net/http/pprof` mux on `--pprof-bind-address` (empty disables); off by default.
+- [x] Wire all four into `cmd/main.go`. Health/readiness endpoints (kubebuilder defaults at `:8081`) stay as-is.
+- [ ] Add tracing spans to hot paths: `Discover`, `HasRenovateConfig` batch, `BuildWorkerJob`, the Run state transitions. **Deferred** — primitives are in place, instrumenting hot paths is additive and can land separately without blocking Phase 6/7.
 
 #### Success Criteria
 

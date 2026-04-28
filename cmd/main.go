@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -37,8 +38,12 @@ import (
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 	"github.com/donaldgifford/renovate-operator/internal/controller"
+	"github.com/donaldgifford/renovate-operator/internal/observability"
 	// +kubebuilder:scaffold:imports
 )
+
+// version is set at build time via -ldflags.
+var version = "dev"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -82,6 +87,9 @@ func main() {
 	var operatorNamespace string
 	flag.StringVar(&operatorNamespace, "operator-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace where the operator's credential Secrets live. Defaults to $POD_NAMESPACE.")
+	var pprofBindAddress string
+	flag.StringVar(&pprofBindAddress, "pprof-bind-address", "",
+		"The address the pprof endpoint binds to (e.g. :8082). Empty disables pprof.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -199,6 +207,25 @@ func main() {
 		setupLog.Info("--operator-namespace not set and POD_NAMESPACE empty; defaulting to renovate-system")
 		operatorNamespace = "renovate-system"
 	}
+
+	observability.Register()
+
+	tracerShutdown, err := observability.InitTracer(ctrl.SetupSignalHandler(), version)
+	if err != nil {
+		setupLog.Error(err, "Failed to init tracer")
+	}
+	defer func() {
+		_ = tracerShutdown(context.Background())
+	}()
+
+	pprofShutdown, err := observability.StartPprof(pprofBindAddress)
+	if err != nil {
+		setupLog.Error(err, "Failed to start pprof")
+		os.Exit(1)
+	}
+	defer func() {
+		_ = pprofShutdown(context.Background())
+	}()
 
 	if err := (&controller.RenovatePlatformReconciler{
 		Client:            mgr.GetClient(),
