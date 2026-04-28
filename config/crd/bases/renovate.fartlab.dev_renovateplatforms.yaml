@@ -17,10 +17,23 @@ spec:
     singular: renovateplatform
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.platformType
+      name: Type
+      type: string
+    - jsonPath: .spec.baseURL
+      name: URL
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: RenovatePlatform is the Schema for the renovateplatforms API
+        description: RenovatePlatform is the Schema for the renovateplatforms API.
         properties:
           apiVersion:
             description: |-
@@ -42,25 +55,131 @@ spec:
           spec:
             description: spec defines the desired state of RenovatePlatform
             properties:
-              foo:
-                description: foo is an example field of RenovatePlatform. Edit renovateplatform_types.go
-                  to remove/update
+              auth:
+                description: |-
+                  Auth is the platform authentication configuration. Exactly one of
+                  auth.githubApp or auth.token must be set.
+                properties:
+                  githubApp:
+                    description: |-
+                      GitHubApp configures GitHub App installation auth. Required when
+                      platformType is github and the org uses an App; the operator mints
+                      installation tokens on each Run.
+                    properties:
+                      appID:
+                        description: AppID is the GitHub App's numeric ID.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      installationID:
+                        description: |-
+                          InstallationID scopes auth to a single installation. Required.
+                          If the App is installed on multiple orgs, declare one RenovatePlatform
+                          per installation rather than overloading a single resource.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      privateKeyRef:
+                        description: |-
+                          PrivateKeyRef references a Secret containing the App's PEM private key.
+                          Defaults to the "private-key.pem" key when SecretKeyReference.Key is empty.
+                        properties:
+                          key:
+                            description: |-
+                              Key is the data key within the Secret. When empty, callers fall back to
+                              the field-specific default (e.g., "token" for token auth, "private-key.pem"
+                              for GitHub App auth).
+                            type: string
+                          name:
+                            description: Name is the Secret's metadata.name.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - appID
+                    - installationID
+                    - privateKeyRef
+                    type: object
+                  token:
+                    description: Token configures personal-access-token / Forgejo-token
+                      auth.
+                    properties:
+                      secretRef:
+                        description: |-
+                          SecretRef references a Secret containing the platform token.
+                          Defaults to the "token" key when SecretKeyReference.Key is empty.
+                        properties:
+                          key:
+                            description: |-
+                              Key is the data key within the Secret. When empty, callers fall back to
+                              the field-specific default (e.g., "token" for token auth, "private-key.pem"
+                              for GitHub App auth).
+                            type: string
+                          name:
+                            description: Name is the Secret's metadata.name.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of githubApp or token must be set
+                  rule: '(has(self.githubApp) ? 1 : 0) + (has(self.token) ? 1 : 0)
+                    == 1'
+              baseURL:
+                description: |-
+                  BaseURL is the platform API endpoint. github defaults to
+                  https://api.github.com when empty; forgejo has no default and must be
+                  set explicitly.
                 type: string
+              platformType:
+                description: PlatformType is the Renovate platform identifier.
+                enum:
+                - github
+                - forgejo
+                type: string
+              presetRepoRef:
+                description: |-
+                  PresetRepoRef is the Renovate preset reference (e.g.,
+                  "github>donaldgifford/renovate-config"). Workers receive it as an
+                  extends entry prepended to each repo's own renovate.json.
+                type: string
+              renovateImage:
+                default: ghcr.io/renovatebot/renovate:latest
+                description: RenovateImage is the container image used by worker pods.
+                type: string
+              runnerConfig:
+                description: |-
+                  RunnerConfig is an opaque JSON blob passed to Renovate workers as
+                  RENOVATE_CONFIG. Use it for runner-level settings (binarySource, dryRun,
+                  hostRules, onboarding, etc.) that should apply across every Scan on this
+                  platform. Per-Scan layering happens via RenovateScanSpec.RenovateConfigOverrides.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            required:
+            - auth
+            - platformType
             type: object
+            x-kubernetes-validations:
+            - message: forgejo platforms require token auth
+              rule: self.platformType != 'forgejo' || has(self.auth.token)
+            - message: forgejo platforms require baseURL
+              rule: self.platformType != 'forgejo' || size(self.baseURL) > 0
           status:
             description: status defines the observed state of RenovatePlatform
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the RenovatePlatform resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  Conditions represent the current state of the RenovatePlatform resource.
+                  The Ready condition is the source of truth; reasons include
+                  CredentialsResolved, SecretNotFound, KeyMissing, AuthFailed, and
+                  PlatformUnreachable.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -119,6 +238,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation value
+                  last reconciled.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

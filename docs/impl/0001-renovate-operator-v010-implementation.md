@@ -100,12 +100,12 @@ Translate [DESIGN-0001 § Type definitions](../design/0001-renovate-operator-v0-
 #### Tasks
 
 - [x] Create `api/v1alpha1/shared_types.go` with `SecretKeyReference`, `LocalObjectReference`, `ConcurrencyPolicy`, `PlatformType` (constants `github`, `forgejo`), `RunPhase` (constants `Pending`/`Discovering`/`Running`/`Succeeded`/`Failed`).
-- [ ] Replace placeholder fields in `renovateplatform_types.go`:
-  - [ ] `RenovatePlatformSpec`: `platformType`, `baseURL`, `auth` (`PlatformAuth` discriminated union), `runnerConfig` (`*runtime.RawExtension` with `+kubebuilder:pruning:PreserveUnknownFields`), `presetRepoRef`, `renovateImage` (default per [Resolved Q1](#q1--renovate-image-version-pin)).
-  - [ ] `PlatformAuth` with `GitHubApp` (App ID, required `installationID`, PEM secret ref) and `Token` (token secret ref).
-  - [ ] `RenovatePlatformStatus`: conditions, `observedGeneration`.
-  - [ ] CEL `XValidation` markers on `Spec`/`Auth`: exactly-one-of `auth.{githubApp,token}`; `forgejo` ⇒ `token`; `forgejo` ⇒ `baseURL` non-empty.
-  - [ ] Printer columns: `Type`, `URL`, `Ready`, `Age`.
+- [x] Replace placeholder fields in `renovateplatform_types.go`:
+  - [x] `RenovatePlatformSpec`: `platformType`, `baseURL`, `auth` (`PlatformAuth` discriminated union), `runnerConfig` (`*runtime.RawExtension` with `+kubebuilder:pruning:PreserveUnknownFields`), `presetRepoRef`, `renovateImage` (default per [Resolved Q1](#q1--renovate-image-version-pin)).
+  - [x] `PlatformAuth` with `GitHubApp` (App ID, required `installationID`, PEM secret ref) and `Token` (token secret ref).
+  - [x] `RenovatePlatformStatus`: conditions, `observedGeneration`.
+  - [x] CEL `XValidation` markers on `Spec`/`Auth`: exactly-one-of `auth.{githubApp,token}`; `forgejo` ⇒ `token`; `forgejo` ⇒ `baseURL` non-empty.
+  - [x] Printer columns: `Type`, `URL`, `Ready`, `Age`.
 - [ ] Replace placeholder fields in `renovatescan_types.go`:
   - [ ] `RenovateScanSpec`: `platformRef`, `schedule`, `timeZone` (default UTC), `suspend`, `concurrencyPolicy` (default `Forbid`), `Workers{Min=1,Max=10,ReposPer=50,BackoffLimitPerIndex=2}`, `Discovery{Autodiscover=true,RequireConfig=true,Filter,Topics,SkipForks=true,SkipArchived=true}`, `renovateConfigOverrides` (preserved JSON), `extraEnv`, `resources`, `successfulRunsHistoryLimit=3`, `failedRunsHistoryLimit=1`.
   - [ ] `RenovateScanStatus`: conditions (`Ready`, `Scheduled`), `lastRunTime`, `lastSuccessfulRunTime`, `nextRunTime`, `lastRunRef`, `activeRuns`, `observedGeneration`.
