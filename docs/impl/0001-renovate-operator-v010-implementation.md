@@ -159,11 +159,10 @@ Implements the `Client` interface for GitHub (App auth) and Forgejo (token), inc
 #### Tasks
 
 - [x] `internal/platform/platform.go`: `Client` interface, `Repository`, `DiscoveryFilter`, error types (transient vs permanent).
-- [ ] `internal/platform/github/`:
-  - [ ] `client.go`: `go-github/v62` + `bradleyfalzon/ghinstallation/v2`; constructs an installation-scoped client from `GitHubAppAuth`.
-  - [ ] `discover.go`: list repos via `/orgs/{org}/repos` paginated (Search API path is a future optimization — see [Resolved Q4](#q4--github-discovery-rest-list-vs-search-api)); apply `Filter`/`Topics`/`SkipForks`/`SkipArchived` server-side where possible, client-side otherwise.
-  - [ ] `has_config.go`: contents-API check across the five known config paths; result memoized per Run.
-  - [ ] `ratelimit.go`: per-installation token bucket sized per [Resolved Q2](#q2--rate-limiter-sizing); honors GitHub's `Retry-After` and primary/secondary rate-limit responses.
+- [x] `internal/platform/github/`:
+  - [x] `client.go`: `go-github/v62` + `bradleyfalzon/ghinstallation/v2`; constructs an installation-scoped client from `GitHubAppAuth`. PAT auth via custom `tokenTransport`. Per-installation `golang.org/x/time/rate` token bucket sized per [Resolved Q2](#q2--rate-limiter-sizing); GitHub's primary `RateLimitError`, secondary `AbuseRateLimitError`, and 429 responses all classify to `*platform.RateLimitedError` (which unwraps to `ErrTransient`). 401/403 → `ErrUnauthorized`; 404 → `ErrNotFound`; 5xx → `ErrTransient`.
+  - [x] `discover.go`: list repos via `/orgs/{org}/repos` paginated (Search API path is a future optimization — see [Resolved Q4](#q4--github-discovery-rest-list-vs-search-api)); falls back to `/users/{user}/repos` on 404 for personal accounts. Filter/Topics/SkipForks/SkipArchived applied client-side (matches Renovate autodiscover semantics).
+  - [x] `has_config.go`: contents-API check across the five `platform.ConfigPaths`; first 200 wins, 404s fall through, any other error short-circuits.
 - [ ] `internal/platform/forgejo/`:
   - [ ] `client.go`: `code.gitea.io/sdk/gitea`; token-authenticated.
   - [ ] `discover.go`: `/orgs/{org}/repos` paginated; same filter handling.
