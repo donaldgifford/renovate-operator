@@ -141,8 +141,8 @@ Side-effect-free helpers that the reconcilers will compose with. Should be 100%-
   - [x] `actualWorkers = clamp(ceil(len/reposPerWorker), min, max)` with `min,max ≥ 1`.
   - [x] Stable across runs given the same input ordering (sort first).
 - [x] `internal/jobspec/job_builder.go` (pure): given `*RenovateRun` + shard `*ConfigMap` → `*batchv1.Job`. Implements every detail from [DESIGN-0001 § Job builder](../design/0001-renovate-operator-v0-1-0.md#job-builder-internalcontrollerjob_buildergo), including the env-var assembly order and the inline shell entrypoint (locked single-container shape per [Resolved Q9](#q9--worker-entrypoint-shell-content); no init container).
-- [ ] `internal/credentials/mirror.go`: pure-ish helpers to construct the mirrored Secret (name, owner ref, labels, data copy); the I/O happens in the Run controller.
-- [ ] Table-driven tests for each builder under `*_test.go`. Aim for 100% branch coverage.
+- [x] `internal/credentials/mirror.go`: pure-ish helpers to construct the mirrored Secret (name, owner ref, labels, data copy); the I/O happens in the Run controller.
+- [x] Table-driven tests for each builder under `*_test.go`. Aim for 100% branch coverage.
 
 #### Success Criteria
 
