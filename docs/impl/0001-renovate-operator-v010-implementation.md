@@ -277,13 +277,14 @@ Unit + envtest layered tests are landed throughout phases 1–5. This phase is t
 
 #### Tasks
 
-- [ ] kind-based e2e harness in `test/e2e/` (extending the kubebuilder-scaffolded skeleton):
+- [x] kind-based e2e harness skeleton in `test/e2e/` is refactored: cert-manager hook stripped (v0.1.0 ships no webhooks per ADR-0006); `BeforeSuite` builds the operator image, loads it into kind, and `helm upgrade --install`s the chart with `defaultScan.enabled=false`; `AfterSuite` runs `helm uninstall` + namespace delete. `make test-e2e` now wraps `CERT_MANAGER_INSTALL_SKIP=true`. Smoke specs verify pod runs, all three CRDs register, and the manager logs `Starting manager`.
+- [ ] kind-based e2e scenarios on top of the harness:
   - [ ] **GitHub stub e2e** (per [Resolved Q5](#q5--e2e-github-fidelity)): apply Platform → Scan with `* * * * *`; assert Run reaches `Succeeded` within 5 minutes; assert metrics increment.
   - [ ] **Forgejo e2e**: real Forgejo container in the kind cluster (image is small); assert end-to-end run.
   - [ ] **Parallelism e2e**: 200 stub repos, `maxWorkers: 5`, `reposPerWorker: 50` ⇒ assert `actualWorkers == 4`, all 200 in shard ConfigMap, Job parallelism 4.
 - [ ] `test/manual/README.md` with the steps for the homelab `donaldgifford/server-price-tracker` and Forgejo manual runs.
 - [ ] `just ci` composite gate stays green: lint + test + build + license-check.
-- [ ] Coverage gate: target ≥ 80% on `internal/controller/...`, `internal/platform/...`, `internal/sharding/...`, `internal/jobspec/...`.
+- [ ] Coverage gate: target ≥ 80% on `internal/controller/...`, `internal/platform/...`, `internal/sharding/...`, `internal/jobspec/...`. Current state from `make test-coverage` (2026-04-26): `clock 100%`, `conditions 100%`, `controller 17.2%` ❌, `credentials 97.6%`, `jobspec 92.7%` ✓, `observability 57.1%`, `platform 100%`, `platform/forgejo 75.0%` ❌, `platform/github 70.3%` ❌, `sharding 92.0%` ✓. Controller coverage is the biggest gap; the platform clients need a few more error-path tests.
 
 #### Success Criteria
 
