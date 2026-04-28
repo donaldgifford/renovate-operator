@@ -57,6 +57,15 @@ Two plugins are registered in `PROJECT` and shape what gets generated/automated:
 
 `.claude/settings.json` enables: `gopls-lsp`, `go-development`, `kubebuilder`, `helm`, `docker`, `makefiles`, `mise`, `shell-scripting`, `docz`, `todo-comments`, `claude-md`. Use the corresponding skills (`kubebuilder:kubebuilder`, `helm:helm`, `docz:docz`, etc.) for their domains.
 
+## v0.1.0 implementation status
+
+Tracked in [`docs/impl/0001-renovate-operator-v010-implementation.md`](docs/impl/0001-renovate-operator-v010-implementation.md). Completed so far:
+
+- Phase 1 (API surface): three CRDs filled in with full schemas, CEL validation rules, printer columns; samples validated against a kind cluster.
+- Phase 2 (pure builders): `internal/clock`, `internal/conditions`, `internal/sharding`, `internal/jobspec`, `internal/credentials`. Aggregate coverage ~94%; only unreachable defensive paths (JSON marshal of static structs, gzip writes into bytes.Buffer) are uncovered.
+
+Reconcilers (Phase 4) depend on these builders + the platform clients (Phase 3). Don't import controller-runtime from the builder packages — they stay pure.
+
 ## Known stale things to fix when convenient
 
 - `.goreleaser.yml` predates the kubebuilder scaffold; should be reconciled with the kubebuilder `Dockerfile` and `cmd/main.go` build path before any release.
