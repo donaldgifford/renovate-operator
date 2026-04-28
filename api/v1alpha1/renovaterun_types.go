@@ -17,52 +17,105 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// RenovateRunSpec defines the desired state of RenovateRun
+// RenovateRunSpec defines the desired state of RenovateRun.
+//
+// Runs are created by the Scan controller; users do not author them by hand.
+// Both PlatformSnapshot and ScanSnapshot are frozen at creation time so a Run
+// cannot change behavior because someone edited the parent Scan or Platform
+// mid-execution.
 type RenovateRunSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// ScanRef points at the parent RenovateScan in the same namespace. Set by
+	// the Scan controller; not user-editable.
+	ScanRef LocalObjectReference `json:"scanRef"`
 
-	// foo is an example field of RenovateRun. Edit renovaterun_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// PlatformSnapshot captures the Platform spec at Run creation. Frozen for
+	// the lifetime of the Run.
+	PlatformSnapshot RenovatePlatformSpec `json:"platformSnapshot"`
+
+	// ScanSnapshot captures the Scan spec at Run creation. Frozen for the
+	// lifetime of the Run.
+	ScanSnapshot RenovateScanSpec `json:"scanSnapshot"`
 }
 
 // RenovateRunStatus defines the observed state of RenovateRun.
 type RenovateRunStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the RenovateRun resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions track Started, Discovered, Succeeded, and Failed. The Phase
+	// field below is a derived cursor for printer columns and quick filtering;
+	// conditions remain the source of truth.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Phase is a typed cursor over the Run state machine.
+	// +optional
+	Phase RunPhase `json:"phase,omitempty"`
+
+	// StartTime is when the Run controller first observed the Run and began
+	// the Pending → Discovering transition.
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
+
+	// DiscoveryCompletionTime is when discovery and shard ConfigMap creation
+	// finished, marking the Discovering → Running transition.
+	// +optional
+	DiscoveryCompletionTime *metav1.Time `json:"discoveryCompletionTime,omitempty"`
+
+	// WorkersStartTime is when the worker Job became active.
+	// +optional
+	WorkersStartTime *metav1.Time `json:"workersStartTime,omitempty"`
+
+	// CompletionTime is the terminal timestamp (Succeeded or Failed).
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
+	// DiscoveredRepos is the count of repos that survived requireConfig and
+	// the discovery filters.
+	// +optional
+	DiscoveredRepos int32 `json:"discoveredRepos,omitempty"`
+
+	// ActualWorkers is clamp(ceil(DiscoveredRepos/reposPerWorker), min, max),
+	// fixed at the Discovering → Running transition.
+	// +optional
+	ActualWorkers int32 `json:"actualWorkers,omitempty"`
+
+	// ShardConfigMapRef points at the ConfigMap holding shard-NNNN.json keys
+	// (or shard-NNNN.json.gz when the manifest exceeds 900 KiB).
+	// +optional
+	ShardConfigMapRef *corev1.ObjectReference `json:"shardConfigMapRef,omitempty"`
+
+	// WorkerJobRef points at the owned Indexed Job.
+	// +optional
+	WorkerJobRef *corev1.ObjectReference `json:"workerJobRef,omitempty"`
+
+	// SucceededShards mirrors batchv1.JobStatus.Succeeded for the owned Job.
+	// +optional
+	SucceededShards int32 `json:"succeededShards,omitempty"`
+
+	// FailedShards mirrors batchv1.JobStatus.Failed for the owned Job.
+	// +optional
+	FailedShards int32 `json:"failedShards,omitempty"`
+
+	// ObservedGeneration is the .metadata.generation value last reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:shortName=rr;rrun
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Scan",type="string",JSONPath=".spec.scanRef.name"
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Repos",type="integer",JSONPath=".status.discoveredRepos"
+// +kubebuilder:printcolumn:name="Workers",type="integer",JSONPath=".status.actualWorkers"
+// +kubebuilder:printcolumn:name="Started",type="date",JSONPath=".status.startTime"
+// +kubebuilder:printcolumn:name="Completed",type="date",JSONPath=".status.completionTime"
 
-// RenovateRun is the Schema for the renovateruns API
+// RenovateRun is the Schema for the renovateruns API.
 type RenovateRun struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -81,7 +134,7 @@ type RenovateRun struct {
 
 // +kubebuilder:object:root=true
 
-// RenovateRunList contains a list of RenovateRun
+// RenovateRunList contains a list of RenovateRun.
 type RenovateRunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`

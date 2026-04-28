@@ -110,10 +110,10 @@ Translate [DESIGN-0001 § Type definitions](../design/0001-renovate-operator-v0-
   - [x] `RenovateScanSpec`: `platformRef`, `schedule`, `timeZone` (default UTC), `suspend`, `concurrencyPolicy` (default `Forbid`), `Workers{Min=1,Max=10,ReposPer=50,BackoffLimitPerIndex=2}`, `Discovery{Autodiscover=true,RequireConfig=true,Filter,Topics,SkipForks=true,SkipArchived=true}`, `renovateConfigOverrides` (preserved JSON), `extraEnv`, `resources`, `successfulRunsHistoryLimit=3`, `failedRunsHistoryLimit=1`.
   - [x] `RenovateScanStatus`: conditions (`Ready`, `Scheduled`), `lastRunTime`, `lastSuccessfulRunTime`, `nextRunTime`, `lastRunRef`, `activeRuns`, `observedGeneration`.
   - [x] Printer columns: `Platform`, `Schedule`, `Last Run`, `Next Run`, `Ready`, `Age`.
-- [ ] Replace placeholder fields in `renovaterun_types.go`:
-  - [ ] `RenovateRunSpec`: `scanRef`, `platformSnapshot RenovatePlatformSpec`, `scanSnapshot RenovateScanSpec`.
-  - [ ] `RenovateRunStatus`: conditions (`Started`, `Discovered`, `Succeeded`, `Failed`), `phase RunPhase`, lifecycle timestamps (`startTime`, `discoveryCompletionTime`, `workersStartTime`, `completionTime`), `discoveredRepos`, `actualWorkers`, `succeededShards`, `failedShards`, `shardConfigMapRef`, `workerJobRef`, `observedGeneration`.
-  - [ ] Printer columns: `Scan`, `Phase`, `Repos`, `Workers`, `Started`, `Completed`.
+- [x] Replace placeholder fields in `renovaterun_types.go`:
+  - [x] `RenovateRunSpec`: `scanRef`, `platformSnapshot RenovatePlatformSpec`, `scanSnapshot RenovateScanSpec`.
+  - [x] `RenovateRunStatus`: conditions (`Started`, `Discovered`, `Succeeded`, `Failed`), `phase RunPhase`, lifecycle timestamps (`startTime`, `discoveryCompletionTime`, `workersStartTime`, `completionTime`), `discoveredRepos`, `actualWorkers`, `succeededShards`, `failedShards`, `shardConfigMapRef`, `workerJobRef`, `observedGeneration`.
+  - [x] Printer columns: `Scan`, `Phase`, `Repos`, `Workers`, `Started`, `Completed`.
 - [ ] Run `make manifests generate`; resolve any controller-gen warnings.
 - [ ] Add realistic example CRs to `config/samples/` (GitHub Platform, Forgejo Platform, a Scan, replacing the kubebuilder defaults). Verify `kubectl apply --dry-run=server -f config/samples/` succeeds against the installed CRDs.
 - [ ] `just lint` clean.

@@ -17,10 +17,29 @@ spec:
     singular: renovaterun
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.scanRef.name
+      name: Scan
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.discoveredRepos
+      name: Repos
+      type: integer
+    - jsonPath: .status.actualWorkers
+      name: Workers
+      type: integer
+    - jsonPath: .status.startTime
+      name: Started
+      type: date
+    - jsonPath: .status.completionTime
+      name: Completed
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: RenovateRun is the Schema for the renovateruns API
+        description: RenovateRun is the Schema for the renovateruns API.
         properties:
           apiVersion:
             description: |-
@@ -42,25 +61,533 @@ spec:
           spec:
             description: spec defines the desired state of RenovateRun
             properties:
-              foo:
-                description: foo is an example field of RenovateRun. Edit renovaterun_types.go
-                  to remove/update
-                type: string
+              platformSnapshot:
+                description: |-
+                  PlatformSnapshot captures the Platform spec at Run creation. Frozen for
+                  the lifetime of the Run.
+                properties:
+                  auth:
+                    description: |-
+                      Auth is the platform authentication configuration. Exactly one of
+                      auth.githubApp or auth.token must be set.
+                    properties:
+                      githubApp:
+                        description: |-
+                          GitHubApp configures GitHub App installation auth. Required when
+                          platformType is github and the org uses an App; the operator mints
+                          installation tokens on each Run.
+                        properties:
+                          appID:
+                            description: AppID is the GitHub App's numeric ID.
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          installationID:
+                            description: |-
+                              InstallationID scopes auth to a single installation. Required.
+                              If the App is installed on multiple orgs, declare one RenovatePlatform
+                              per installation rather than overloading a single resource.
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          privateKeyRef:
+                            description: |-
+                              PrivateKeyRef references a Secret containing the App's PEM private key.
+                              Defaults to the "private-key.pem" key when SecretKeyReference.Key is empty.
+                            properties:
+                              key:
+                                description: |-
+                                  Key is the data key within the Secret. When empty, callers fall back to
+                                  the field-specific default (e.g., "token" for token auth, "private-key.pem"
+                                  for GitHub App auth).
+                                type: string
+                              name:
+                                description: Name is the Secret's metadata.name.
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - appID
+                        - installationID
+                        - privateKeyRef
+                        type: object
+                      token:
+                        description: Token configures personal-access-token / Forgejo-token
+                          auth.
+                        properties:
+                          secretRef:
+                            description: |-
+                              SecretRef references a Secret containing the platform token.
+                              Defaults to the "token" key when SecretKeyReference.Key is empty.
+                            properties:
+                              key:
+                                description: |-
+                                  Key is the data key within the Secret. When empty, callers fall back to
+                                  the field-specific default (e.g., "token" for token auth, "private-key.pem"
+                                  for GitHub App auth).
+                                type: string
+                              name:
+                                description: Name is the Secret's metadata.name.
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of githubApp or token must be set
+                      rule: '(has(self.githubApp) ? 1 : 0) + (has(self.token) ? 1
+                        : 0) == 1'
+                  baseURL:
+                    description: |-
+                      BaseURL is the platform API endpoint. github defaults to
+                      https://api.github.com when empty; forgejo has no default and must be
+                      set explicitly.
+                    type: string
+                  platformType:
+                    description: PlatformType is the Renovate platform identifier.
+                    enum:
+                    - github
+                    - forgejo
+                    type: string
+                  presetRepoRef:
+                    description: |-
+                      PresetRepoRef is the Renovate preset reference (e.g.,
+                      "github>donaldgifford/renovate-config"). Workers receive it as an
+                      extends entry prepended to each repo's own renovate.json.
+                    type: string
+                  renovateImage:
+                    default: ghcr.io/renovatebot/renovate:latest
+                    description: RenovateImage is the container image used by worker
+                      pods.
+                    type: string
+                  runnerConfig:
+                    description: |-
+                      RunnerConfig is an opaque JSON blob passed to Renovate workers as
+                      RENOVATE_CONFIG. Use it for runner-level settings (binarySource, dryRun,
+                      hostRules, onboarding, etc.) that should apply across every Scan on this
+                      platform. Per-Scan layering happens via RenovateScanSpec.RenovateConfigOverrides.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                required:
+                - auth
+                - platformType
+                type: object
+                x-kubernetes-validations:
+                - message: forgejo platforms require token auth
+                  rule: self.platformType != 'forgejo' || has(self.auth.token)
+                - message: forgejo platforms require baseURL
+                  rule: self.platformType != 'forgejo' || size(self.baseURL) > 0
+              scanRef:
+                description: |-
+                  ScanRef points at the parent RenovateScan in the same namespace. Set by
+                  the Scan controller; not user-editable.
+                properties:
+                  name:
+                    description: Name of the referent.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              scanSnapshot:
+                description: |-
+                  ScanSnapshot captures the Scan spec at Run creation. Frozen for the
+                  lifetime of the Run.
+                properties:
+                  concurrencyPolicy:
+                    default: Forbid
+                    description: |-
+                      ConcurrencyPolicy controls behavior when a scheduled fire-time arrives
+                      while a non-terminal Run still exists for this Scan.
+                    enum:
+                    - Allow
+                    - Forbid
+                    - Replace
+                    type: string
+                  discovery:
+                    description: 'Discovery configures repo enumeration: which repos
+                      a Run targets.'
+                    properties:
+                      autodiscover:
+                        default: true
+                        description: |-
+                          Autodiscover enables platform-side repo enumeration. When false the
+                          Scan's own renovateConfigOverrides must supply the repository list.
+                        type: boolean
+                      filter:
+                        description: |-
+                          Filter is a list of Renovate-style autodiscover filters
+                          (e.g., "owner/*", "owner/prefix-*"). Empty means no filter — all repos
+                          the credentials can see are eligible.
+                        items:
+                          type: string
+                        type: array
+                      requireConfig:
+                        default: true
+                        description: |-
+                          RequireConfig drops repos that lack a Renovate config in their default
+                          branch. STRONGLY recommended for org-wide scans to avoid mass
+                          onboarding-PR generation.
+                        type: boolean
+                      skipArchived:
+                        default: true
+                        description: SkipArchived drops archived repos from discovery.
+                        type: boolean
+                      skipForks:
+                        default: true
+                        description: SkipForks drops forked repos from discovery.
+                        type: boolean
+                      topics:
+                        description: |-
+                          Topics restricts to repos with at least one of the listed topics.
+                          GitHub only; ignored for Forgejo.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  extraEnv:
+                    description: |-
+                      ExtraEnv appends environment variables to the worker container, after
+                      the operator's RENOVATE_* defaults. Use sparingly; prefer renovateConfig.
+                    items:
+                      description: EnvVar represents an environment variable present
+                        in a Container.
+                      properties:
+                        name:
+                          description: |-
+                            Name of the environment variable.
+                            May consist of any printable ASCII characters except '='.
+                          type: string
+                        value:
+                          description: |-
+                            Variable references $(VAR_NAME) are expanded
+                            using the previously defined environment variables in the container and
+                            any service environment variables. If a variable cannot be resolved,
+                            the reference in the input string will be unchanged. Double $$ are reduced
+                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                            Escaped references will never be expanded, regardless of whether the variable
+                            exists or not.
+                            Defaults to "".
+                          type: string
+                        valueFrom:
+                          description: Source for the environment variable's value.
+                            Cannot be used if value is not empty.
+                          properties:
+                            configMapKeyRef:
+                              description: Selects a key of a ConfigMap.
+                              properties:
+                                key:
+                                  description: The key to select.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the ConfigMap or its
+                                    key must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            fieldRef:
+                              description: |-
+                                Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                              properties:
+                                apiVersion:
+                                  description: Version of the schema the FieldPath
+                                    is written in terms of, defaults to "v1".
+                                  type: string
+                                fieldPath:
+                                  description: Path of the field to select in the
+                                    specified API version.
+                                  type: string
+                              required:
+                              - fieldPath
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            fileKeyRef:
+                              description: |-
+                                FileKeyRef selects a key of the env file.
+                                Requires the EnvFiles feature gate to be enabled.
+                              properties:
+                                key:
+                                  description: |-
+                                    The key within the env file. An invalid key will prevent the pod from starting.
+                                    The keys defined within a source may consist of any printable ASCII characters except '='.
+                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                  type: string
+                                optional:
+                                  default: false
+                                  description: |-
+                                    Specify whether the file or its key must be defined. If the file or key
+                                    does not exist, then the env var is not published.
+                                    If optional is set to true and the specified key does not exist,
+                                    the environment variable will not be set in the Pod's containers.
+
+                                    If optional is set to false and the specified key does not exist,
+                                    an error will be returned during Pod creation.
+                                  type: boolean
+                                path:
+                                  description: |-
+                                    The path within the volume from which to select the file.
+                                    Must be relative and may not contain the '..' path or start with '..'.
+                                  type: string
+                                volumeName:
+                                  description: The name of the volume mount containing
+                                    the env file.
+                                  type: string
+                              required:
+                              - key
+                              - path
+                              - volumeName
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            resourceFieldRef:
+                              description: |-
+                                Selects a resource of the container: only resources limits and requests
+                                (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                              properties:
+                                containerName:
+                                  description: 'Container name: required for volumes,
+                                    optional for env vars'
+                                  type: string
+                                divisor:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  description: Specifies the output format of the
+                                    exposed resources, defaults to "1"
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                resource:
+                                  description: 'Required: resource to select'
+                                  type: string
+                              required:
+                              - resource
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            secretKeyRef:
+                              description: Selects a key of a secret in the pod's
+                                namespace
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  failedRunsHistoryLimit:
+                    default: 1
+                    description: |-
+                      FailedRunsHistoryLimit retains this many terminal-Failed Runs before
+                      garbage-collecting the oldest.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  platformRef:
+                    description: |-
+                      PlatformRef points at the cluster-scoped RenovatePlatform this Scan
+                      runs against.
+                    properties:
+                      name:
+                        description: Name of the referent.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  renovateConfigOverrides:
+                    description: |-
+                      RenovateConfigOverrides is layered on top of Platform.spec.runnerConfig
+                      for Runs of this Scan. Field-by-field merge with Scan winning on
+                      collision.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  resources:
+                    description: |-
+                      Resources sets the worker container's resource requests and limits.
+                      Falls back to chart defaults when nil.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  schedule:
+                    description: |-
+                      Schedule is a cron expression evaluated in TimeZone. Standard 5-field
+                      cron syntax (robfig/cron/v3 parser).
+                    minLength: 1
+                    type: string
+                  successfulRunsHistoryLimit:
+                    default: 3
+                    description: |-
+                      SuccessfulRunsHistoryLimit retains this many terminal-Succeeded Runs
+                      before garbage-collecting the oldest.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  suspend:
+                    default: false
+                    description: Suspend pauses scheduling without deleting the Scan
+                      or its history.
+                    type: boolean
+                  timeZone:
+                    default: UTC
+                    description: TimeZone is the IANA zone the cron expression is
+                      evaluated in.
+                    type: string
+                  workers:
+                    description: |-
+                      Workers controls per-Run parallelism: how many Indexed Job workers run,
+                      the repos-per-worker target, and the per-index backoff limit.
+                    properties:
+                      backoffLimitPerIndex:
+                        default: 2
+                        description: |-
+                          BackoffLimitPerIndex bounds retries for each shard before the worker
+                          Job fails. Set to 0 for no retries.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      maxWorkers:
+                        default: 10
+                        description: MaxWorkers is the upper bound on Indexed Job
+                          parallelism.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      minWorkers:
+                        default: 1
+                        description: |-
+                          MinWorkers is the lower bound on Indexed Job parallelism. The controller
+                          always launches at least this many workers, even for empty discovery.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      reposPerWorker:
+                        default: 50
+                        description: |-
+                          ReposPerWorker is the soft target for shard size. The controller picks
+                          actualWorkers = clamp(ceil(repos/reposPerWorker), Min, Max).
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    type: object
+                required:
+                - platformRef
+                - schedule
+                type: object
+            required:
+            - platformSnapshot
+            - scanRef
+            - scanSnapshot
             type: object
           status:
             description: status defines the observed state of RenovateRun
             properties:
+              actualWorkers:
+                description: |-
+                  ActualWorkers is clamp(ceil(DiscoveredRepos/reposPerWorker), min, max),
+                  fixed at the Discovering → Running transition.
+                format: int32
+                type: integer
+              completionTime:
+                description: CompletionTime is the terminal timestamp (Succeeded or
+                  Failed).
+                format: date-time
+                type: string
               conditions:
                 description: |-
-                  conditions represent the current state of the RenovateRun resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  Conditions track Started, Discovered, Succeeded, and Failed. The Phase
+                  field below is a derived cursor for printer columns and quick filtering;
+                  conditions remain the source of truth.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -119,6 +646,140 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveredRepos:
+                description: |-
+                  DiscoveredRepos is the count of repos that survived requireConfig and
+                  the discovery filters.
+                format: int32
+                type: integer
+              discoveryCompletionTime:
+                description: |-
+                  DiscoveryCompletionTime is when discovery and shard ConfigMap creation
+                  finished, marking the Discovering → Running transition.
+                format: date-time
+                type: string
+              failedShards:
+                description: FailedShards mirrors batchv1.JobStatus.Failed for the
+                  owned Job.
+                format: int32
+                type: integer
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation value
+                  last reconciled.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is a typed cursor over the Run state machine.
+                enum:
+                - Pending
+                - Discovering
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              shardConfigMapRef:
+                description: |-
+                  ShardConfigMapRef points at the ConfigMap holding shard-NNNN.json keys
+                  (or shard-NNNN.json.gz when the manifest exceeds 900 KiB).
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              startTime:
+                description: |-
+                  StartTime is when the Run controller first observed the Run and began
+                  the Pending → Discovering transition.
+                format: date-time
+                type: string
+              succeededShards:
+                description: SucceededShards mirrors batchv1.JobStatus.Succeeded for
+                  the owned Job.
+                format: int32
+                type: integer
+              workerJobRef:
+                description: WorkerJobRef points at the owned Indexed Job.
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              workersStartTime:
+                description: WorkersStartTime is when the worker Job became active.
+                format: date-time
+                type: string
             type: object
         required:
         - spec
