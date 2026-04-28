@@ -136,10 +136,10 @@ Side-effect-free helpers that the reconcilers will compose with. Should be 100%-
 
 - [x] `internal/clock/clock.go`: thin wrapper around `k8s.io/utils/clock` so reconcilers and tests can swap implementations (`clock.Clock` interface, real + fake).
 - [x] `internal/conditions/conditions.go`: thin helpers around `meta.SetStatusCondition` for the condition types this project uses (so reconcilers don't repeat the same boilerplate). Lint should reject direct `append` to condition slices elsewhere.
-- [ ] `internal/sharding/shard_builder.go` (pure): given `[]Repository` + `WorkersSpec`, produce `actualWorkers` and the shard ConfigMap data (`shard-NNNN.json` keys, optional gzip+base64 above 900 KiB). Contract:
-  - [ ] Round-robin assignment across `actualWorkers`.
-  - [ ] `actualWorkers = clamp(ceil(len/reposPerWorker), min, max)` with `min,max ≥ 1`.
-  - [ ] Stable across runs given the same input ordering (sort first).
+- [x] `internal/sharding/shard_builder.go` (pure): given `[]Repository` + `WorkersSpec`, produce `actualWorkers` and the shard ConfigMap data (`shard-NNNN.json` keys, optional gzip+base64 above 900 KiB). Contract:
+  - [x] Round-robin assignment across `actualWorkers`.
+  - [x] `actualWorkers = clamp(ceil(len/reposPerWorker), min, max)` with `min,max ≥ 1`.
+  - [x] Stable across runs given the same input ordering (sort first).
 - [ ] `internal/jobspec/job_builder.go` (pure): given `*RenovateRun` + shard `*ConfigMap` → `*batchv1.Job`. Implements every detail from [DESIGN-0001 § Job builder](../design/0001-renovate-operator-v0-1-0.md#job-builder-internalcontrollerjob_buildergo), including the env-var assembly order and the `shard-loader` init container shell script (locked inline; see [Resolved Q9](#q9--worker-entrypoint-shell-content)).
 - [ ] `internal/credentials/mirror.go`: pure-ish helpers to construct the mirrored Secret (name, owner ref, labels, data copy); the I/O happens in the Run controller.
 - [ ] Table-driven tests for each builder under `*_test.go`. Aim for 100% branch coverage.
