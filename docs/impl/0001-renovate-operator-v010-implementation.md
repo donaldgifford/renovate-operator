@@ -256,11 +256,11 @@ Polish the kubebuilder-scaffolded chart into the values surface DESIGN-0001 spec
 - [x] `dist/chart/templates/extra/prometheusrule.yaml` gated by `.Values.metrics.prometheusRule.enabled`. Recording rules + four conservative alerts (failure ratio, discovery errors, shard failures, stuck run).
 - [x] Pre-install validation: template guard in `default-scan.yaml` calls `fail` when `defaultScan.enabled=true && defaultScan.platformRef.name == ""`. Verified by `helm lint dist/chart` (fails) and `helm lint dist/chart --set defaultScan.enabled=false` (clean).
 - [x] Strip the kubebuilder-scaffolded `dist/chart/templates/certmanager/` per [Resolved Q6](#q6--cert-manager-template); `make chart-regenerate` wraps `kubebuilder edit --plugins=helm/v1-alpha --force` + `make chart-clean` so the cert-manager template is re-stripped automatically. NOTES.txt + values.yaml comment document cert-manager as a future-webhook prerequisite. The `metrics-service.yaml` and `manager.yaml` templates were also de-cert-manager-ed; legacy `prometheus/monitor.yaml` falls back to insecureSkipVerify.
-- [ ] `contrib/grafana/dashboards/{operator,runs,traces,logs}.json` per [ADR-0007](../adr/0007-observability-stack.md).
-- [ ] `contrib/prometheus/{alerts,recording-rules}.yaml`.
-- [ ] `contrib/alloy/operator.river`.
-- [ ] `contrib/README.md` indexing how to import each.
-- [ ] Custom lint: every metric in `internal/observability/metrics.go` is referenced in at least one dashboard or alert (or excluded via `// metric:internal`).
+- [x] `contrib/grafana/dashboards/{operator,runs,traces,logs}.json` per [ADR-0007](../adr/0007-observability-stack.md). All four dashboards declare their datasource via `__inputs` so Grafana prompts at import.
+- [x] `contrib/prometheus/{alerts,recording-rules}.yaml` — standalone `PrometheusRule` resources mirroring the chart-bundled copy. Includes a `RenovateOperatorPodNotReady` alert keyed off `kube-state-metrics` that the chart copy omits (chart copy is keyed on operator-emitted metrics only).
+- [x] `contrib/alloy/operator.river` — Kubernetes pod scrape + Loki log forwarding (with JSON `level`/`trace_id`/`scan`/`platform` extraction) + OTLP receiver-to-Tempo block.
+- [x] `contrib/README.md` indexing how to import each, including the inter-dashboard pivot path (runs → logs via scan/platform; logs → traces via `trace_id`).
+- [x] Custom lint: `scripts/lint-metrics-coverage.sh` (wired as `make metrics-coverage-lint`) parses `Name: "..."` lines from `internal/observability/metrics.go` and greps `contrib/` + the chart PrometheusRule. Exempt via `// metric:internal` on the same line. All 7 current metrics covered.
 
 #### Success Criteria
 

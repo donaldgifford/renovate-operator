@@ -1,0 +1,138 @@
+// Grafana Alloy config snippet for ingesting renovate-operator
+// observability into a Prometheus + Loki + Tempo stack.
+//
+// Copy the relevant blocks into your Alloy config (typically
+// /etc/alloy/config.alloy) or merge into your existing pipelines.
+// The block names below assume a stock kube-prometheus-stack /
+// loki / tempo install; adjust upstream targets as needed.
+
+// ---------------------------------------------------------------------
+// Metrics: scrape the operator's metrics endpoint and forward to Mimir
+// or vanilla Prometheus remote-write. The chart's ServiceMonitor
+// (dist/chart/templates/extra/servicemonitor.yaml) already covers this
+// path for kube-prometheus-stack users; this block is for Alloy-only
+// installs.
+// ---------------------------------------------------------------------
+
+discovery.kubernetes "operator_pods" {
+	role = "pod"
+	selectors {
+		role = "pod"
+		label = "app.kubernetes.io/name=renovate-operator"
+	}
+}
+
+discovery.relabel "operator_pods" {
+	targets = discovery.kubernetes.operator_pods.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		action        = "keep"
+		regex         = "https"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.scrape "operator" {
+	targets    = discovery.relabel.operator_pods.output
+	forward_to = [prometheus.remote_write.default.receiver]
+	scheme     = "https"
+
+	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+	tls_config {
+		// Operator uses controller-runtime self-signed certs in v0.1.0.
+		// Pin a real CA when cert-manager-managed certs land.
+		insecure_skip_verify = true
+	}
+
+	job_name        = "renovate-operator"
+	scrape_interval = "30s"
+	metrics_path    = "/metrics"
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://prometheus-server.monitoring.svc:9090/api/v1/write"
+	}
+}
+
+// ---------------------------------------------------------------------
+// Logs: tail the operator pod's stdout (JSON) and forward to Loki. The
+// operator emits zap-format JSON; the json_extract stage pulls common
+// fields (level, msg, trace_id) into Loki labels for Grafana drill-down.
+// ---------------------------------------------------------------------
+
+discovery.kubernetes "operator_logs" {
+	role = "pod"
+	selectors {
+		role = "pod"
+		label = "app.kubernetes.io/name=renovate-operator"
+	}
+}
+
+loki.source.kubernetes "operator" {
+	targets    = discovery.kubernetes.operator_logs.targets
+	forward_to = [loki.process.operator.receiver]
+}
+
+loki.process "operator" {
+	forward_to = [loki.write.default.receiver]
+
+	stage.json {
+		expressions = {
+			level    = "level",
+			msg      = "msg",
+			trace_id = "trace_id",
+			span_id  = "span_id",
+			scan     = "scan",
+			platform = "platform",
+		}
+	}
+
+	stage.labels {
+		values = {
+			level    = "",
+			scan     = "",
+			platform = "",
+		}
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki-gateway.monitoring.svc/loki/api/v1/push"
+	}
+}
+
+// ---------------------------------------------------------------------
+// Traces: receive OTLP from the operator (set
+// `tracing.otlpEndpoint: alloy.monitoring.svc:4317` in chart values)
+// and forward to Tempo. Drop this block if you point the operator
+// directly at Tempo.
+// ---------------------------------------------------------------------
+
+otelcol.receiver.otlp "operator" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+	output {
+		traces = [otelcol.exporter.otlp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlp "tempo" {
+	client {
+		endpoint = "tempo.monitoring.svc:4317"
+		tls {
+			insecure = true
+		}
+	}
+}

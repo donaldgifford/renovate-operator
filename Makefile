@@ -161,6 +161,10 @@ chart-lint: ## helm lint the operator chart (defaultScan.platformRef.name guard 
 	helm lint dist/chart
 	helm lint dist/chart --set defaultScan.enabled=false
 
+.PHONY: metrics-coverage-lint
+metrics-coverage-lint: ## Fail if a metric in internal/observability/metrics.go is not referenced anywhere under contrib/ or the chart's PrometheusRule.
+	./scripts/lint-metrics-coverage.sh
+
 ##@ Deployment
 
 ifndef ignore-not-found
