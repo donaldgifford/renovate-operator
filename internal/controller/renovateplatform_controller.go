@@ -152,7 +152,7 @@ func (r *RenovatePlatformReconciler) resolveAuthRef(p *renovatev1alpha1.Renovate
 		}
 		key := ref.Key
 		if key == "" {
-			key = "private-key.pem"
+			key = defaultGitHubAppPEMKey
 		}
 		return ref.Name, key, nil
 	case auth.Token != nil:
@@ -162,7 +162,7 @@ func (r *RenovatePlatformReconciler) resolveAuthRef(p *renovatev1alpha1.Renovate
 		}
 		key := ref.Key
 		if key == "" {
-			key = "token"
+			key = defaultTokenKey
 		}
 		return ref.Name, key, nil
 	default:

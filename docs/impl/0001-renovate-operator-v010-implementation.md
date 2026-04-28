@@ -200,13 +200,13 @@ The bulk of the operator. Each controller gets its own file and envtest suite. B
   - [x] GC old terminal Runs per `successfulRunsHistoryLimit`/`failedRunsHistoryLimit`.
   - [x] Set `Scheduled=True`, `RequeueAfter = nextRunTime - now` capped at 5m.
   - [x] Watches: Scan + Platform (mapped) + Run (owned).
-- [ ] **Run controller (`internal/controller/renovaterun_controller.go`)** — state machine per [DESIGN-0001 § Reconciler: RenovateRun](../design/0001-renovate-operator-v0-1-0.md#reconciler-renovaterun):
-  - [ ] `Pending` → `Discovering`: set startTime, set `Started=True`, instantiate platform client from snapshot, mirror credential Secret into Run's namespace.
-  - [ ] `Discovering`: call `platform.Discover`, apply `requireConfig` filter (concurrency-bounded `errgroup`), compute `actualWorkers`, build shard ConfigMap, build worker Job, transition to `Running` with `Discovered=True`. Idempotent — survives controller crash mid-step.
-  - [ ] `Running`: read owned Job's index counters, update `succeededShards`/`failedShards`, transition to `Succeeded` (`succeeded == completions`) or `Failed` (terminal Job failure, exhausted `backoffLimitPerIndex`).
-  - [ ] Terminal phases: no further work; rely on parent Scan's history-limit GC.
-  - [ ] Watches: Run + owned Job + owned ConfigMap.
-- [ ] Cluster RBAC markers (`+kubebuilder:rbac:...`) per controller; verify `make manifests` regenerates `config/rbac/role.yaml` to include `secrets get/list/watch/create` for the Run controller's mirror operation.
+- [x] **Run controller (`internal/controller/renovaterun_controller.go`)** — state machine per [DESIGN-0001 § Reconciler: RenovateRun](../design/0001-renovate-operator-v0-1-0.md#reconciler-renovaterun):
+  - [x] `Pending` → `Discovering`: set startTime, set `Started=True`, instantiate platform client from snapshot via `PlatformClientFactory`, mirror credential Secret into Run's namespace via `internal/credentials.BuildMirror`.
+  - [x] `Discovering`: call `platform.Discover`, apply `requireConfig` filter (sequential for v0.1.0 — `errgroup` is a perf hardening; correctness comes first), compute `actualWorkers` via `internal/sharding.Build`, create shard ConfigMap (owner-ref'd to Run), build worker Job via `internal/jobspec.BuildWorkerJob`, transition to `Running` with `Discovered=True`. Idempotent — re-Get on each step short-circuits when the resource already exists.
+  - [x] `Running`: read owned Job's `Status.{Succeeded,Failed}`, update `succeededShards`/`failedShards`, transition to `Succeeded` (`succeeded == completions`) or `Failed` (`JobFailed` condition).
+  - [x] Terminal phases: no further work; rely on parent Scan's history-limit GC.
+  - [x] Watches: Run + owned Job + owned ConfigMap + owned Secret.
+- [x] Cluster RBAC markers (`+kubebuilder:rbac:...`) per controller; `make manifests` regenerates `config/rbac/role.yaml` with secrets / configmaps / batch.jobs full verbs for the Run controller's mirror + ConfigMap + Job ops.
 - [ ] Wire the three controllers into `cmd/main.go`'s manager, with the existing kubebuilder leader-election defaults.
 
 #### Success Criteria
