@@ -250,11 +250,11 @@ Polish the kubebuilder-scaffolded chart into the values surface DESIGN-0001 spec
 
 #### Tasks
 
-- [ ] Replace `dist/chart/values.yaml` with the surface in [DESIGN-0001 § values.yaml](../design/0001-renovate-operator-v0-1-0.md#valuesyaml-top-level-surface): image, replicas+leaderElect, resources, metrics + ServiceMonitor + PrometheusRule (gated), tracing, pprof, logging level/format, `defaultScan` block, worker resources defaults.
-- [ ] `dist/chart/templates/extra/default-scan.yaml` gated by `.Values.defaultScan.enabled` per [ADR-0008](../adr/0008-default-scan-via-helm-chart.md). Use `helm.sh/resource-policy: keep`.
-- [ ] `dist/chart/templates/extra/servicemonitor.yaml` gated by `.Values.metrics.serviceMonitor.enabled`. Default `additionalLabels: {release: kube-prometheus-stack}` per [Resolved Q8](#q8--servicemonitor--prometheusrule-label-defaults).
-- [ ] `dist/chart/templates/extra/prometheusrule.yaml` gated by `.Values.metrics.prometheusRule.enabled`.
-- [ ] Pre-install validation: lint hook (or template guard) that fails when `defaultScan.enabled=true && defaultScan.platformRef.name == ""`.
+- [x] Replace `dist/chart/values.yaml` with the surface in [DESIGN-0001 § values.yaml](../design/0001-renovate-operator-v0-1-0.md#valuesyaml-top-level-surface): image, replicas+leaderElect, resources, metrics + ServiceMonitor + PrometheusRule (gated), tracing, pprof, logging level/format, `defaultScan` block, worker resources defaults. The legacy `controllerManager` block is kept alongside for backward compat with the kubebuilder-scaffolded `manager.yaml` template.
+- [x] `dist/chart/templates/extra/default-scan.yaml` gated by `.Values.defaultScan.enabled` per [ADR-0008](../adr/0008-default-scan-via-helm-chart.md). Use `helm.sh/resource-policy: keep`.
+- [x] `dist/chart/templates/extra/servicemonitor.yaml` gated by `.Values.metrics.serviceMonitor.enabled`. Default `additionalLabels: {release: kube-prometheus-stack}` per [Resolved Q8](#q8--servicemonitor--prometheusrule-label-defaults).
+- [x] `dist/chart/templates/extra/prometheusrule.yaml` gated by `.Values.metrics.prometheusRule.enabled`. Recording rules + four conservative alerts (failure ratio, discovery errors, shard failures, stuck run).
+- [x] Pre-install validation: template guard in `default-scan.yaml` calls `fail` when `defaultScan.enabled=true && defaultScan.platformRef.name == ""`. Verified by `helm lint dist/chart` (fails) and `helm lint dist/chart --set defaultScan.enabled=false` (clean).
 - [ ] Strip the kubebuilder-scaffolded `dist/chart/templates/certmanager/` per [Resolved Q6](#q6--cert-manager-template); add a post-regen `just chart-clean` (or similar) step that re-strips after `kubebuilder edit --plugins helm/v1-alpha` re-emits it. Document cert-manager as an installation prerequisite in `dist/chart/README.md` / NOTES.txt for future webhook-bearing releases.
 - [ ] `contrib/grafana/dashboards/{operator,runs,traces,logs}.json` per [ADR-0007](../adr/0007-observability-stack.md).
 - [ ] `contrib/prometheus/{alerts,recording-rules}.yaml`.

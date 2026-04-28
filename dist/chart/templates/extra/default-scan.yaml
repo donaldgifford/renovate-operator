@@ -1,0 +1,60 @@
+{{/*
+Default RenovateScan shipped with the chart per ADR-0008.
+
+Gated by .Values.defaultScan.enabled. Resource policy `keep` ensures the
+Scan and its child Run history survive `helm uninstall` so an operator
+upgrade or accidental uninstall does not lose successfully completed
+runs. The chart only owns CREATE; user edits in-cluster are preserved
+via three-way merge on subsequent `helm upgrade`.
+
+Pre-install validation: defaultScan.platformRef.name MUST be set when
+defaultScan.enabled=true. The fail-fast guard below stops `helm install`
+before any resources are created.
+*/}}
+{{- if .Values.defaultScan.enabled -}}
+{{- if not .Values.defaultScan.platformRef.name -}}
+{{- fail "defaultScan.enabled=true but defaultScan.platformRef.name is empty — set it to a RenovatePlatform name (or disable defaultScan)." -}}
+{{- end -}}
+apiVersion: renovate.fartlab.dev/v1alpha1
+kind: RenovateScan
+metadata:
+  name: {{ .Values.defaultScan.name }}
+  namespace: {{ default .Release.Namespace .Values.defaultScan.namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  platformRef:
+    name: {{ .Values.defaultScan.platformRef.name | quote }}
+  schedule: {{ .Values.defaultScan.schedule | quote }}
+  timeZone: {{ .Values.defaultScan.timeZone | quote }}
+  suspend: {{ .Values.defaultScan.suspend }}
+  concurrencyPolicy: {{ .Values.defaultScan.concurrencyPolicy }}
+  workers:
+    minWorkers: {{ .Values.defaultScan.workers.minWorkers }}
+    maxWorkers: {{ .Values.defaultScan.workers.maxWorkers }}
+    reposPerWorker: {{ .Values.defaultScan.workers.reposPerWorker }}
+    backoffLimitPerIndex: {{ .Values.defaultScan.workers.backoffLimitPerIndex }}
+  discovery:
+    autodiscover: {{ .Values.defaultScan.discovery.autodiscover }}
+    requireConfig: {{ .Values.defaultScan.discovery.requireConfig }}
+    skipForks: {{ .Values.defaultScan.discovery.skipForks }}
+    skipArchived: {{ .Values.defaultScan.discovery.skipArchived }}
+    {{- with .Values.defaultScan.discovery.filter }}
+    filter:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.defaultScan.discovery.topics }}
+    topics:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  successfulRunsHistoryLimit: {{ .Values.defaultScan.successfulRunsHistoryLimit }}
+  failedRunsHistoryLimit: {{ .Values.defaultScan.failedRunsHistoryLimit }}
+  resources:
+    {{- toYaml .Values.defaultScan.resources | nindent 4 }}
+  {{- with .Values.defaultScan.extraEnv }}
+  extraEnv:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

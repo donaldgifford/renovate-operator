@@ -1,0 +1,90 @@
+{{/*
+PrometheusRule shipping default alerts and recording rules for the
+operator's Prometheus metrics. Gated by .Values.metrics.prometheusRule.enabled.
+
+Default additionalLabels target the kube-prometheus-stack Operator's
+`release: kube-prometheus-stack` selector per Resolved Q8 in IMPL-0001.
+Alerts are intentionally conservative; tune severity/for via overrides
+in contrib/prometheus or with helm --set.
+
+Metric names referenced here MUST match internal/observability/metrics.go.
+A custom lint enforces this in CI per Phase 6.6.
+*/}}
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "chart.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: renovate-operator.rules
+      interval: 30s
+      rules:
+        # Recording rules collapse the high-cardinality {scan,platform,result}
+        # label set into per-scan and per-platform aggregates that dashboards
+        # can hit without re-aggregating every refresh.
+        - record: renovate_operator:runs:rate5m
+          expr: sum(rate(renovate_operator_runs_total[5m])) by (scan, platform, result)
+        - record: renovate_operator:runs:failure_ratio5m
+          expr: |
+            sum(rate(renovate_operator_runs_total{result="failed"}[5m])) by (scan, platform)
+              /
+            clamp_min(sum(rate(renovate_operator_runs_total[5m])) by (scan, platform), 1)
+        - record: renovate_operator:run_duration:p95_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(renovate_operator_run_duration_seconds_bucket[5m])) by (le, scan, platform))
+
+    - name: renovate-operator.alerts
+      rules:
+        - alert: RenovateOperatorRunsFailing
+          expr: renovate_operator:runs:failure_ratio5m > 0.5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ">50% of renovate runs failing for {{ "{{" }} $labels.scan {{ "}}" }} on {{ "{{" }} $labels.platform {{ "}}" }}"
+            description: |
+              Failure ratio over the last 5m is {{ "{{" }} $value | humanizePercentage {{ "}}" }}.
+              Inspect the RenovateRun list and operator logs for the failing scan.
+
+        - alert: RenovateOperatorDiscoveryErrors
+          expr: sum(rate(renovate_operator_discovery_errors_total[5m])) by (scan, platform) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Repository discovery errors for {{ "{{" }} $labels.scan {{ "}}" }} on {{ "{{" }} $labels.platform {{ "}}" }}"
+            description: |
+              Sustained discovery errors typically indicate auth/credential issues
+              or upstream platform outages. Check the RenovatePlatform Ready
+              condition and the operator's CredentialsResolved reason.
+
+        - alert: RenovateOperatorWorkerShardsFailing
+          expr: sum(rate(renovate_operator_shards_failed_total[15m])) by (scan, platform) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Renovate worker shards are failing for {{ "{{" }} $labels.scan {{ "}}" }}"
+            description: |
+              Indexed Job shards are exiting non-zero past their backoffLimitPerIndex.
+              Inspect the worker Job and shard ConfigMap for repo-level errors.
+
+        - alert: RenovateOperatorRunStuck
+          expr: renovate_operator_active_runs > 0 and on() (time() - max(renovate_operator_run_duration_seconds_sum) > 7200)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "RenovateRun appears stuck (>2h elapsed)"
+            description: |
+              At least one RenovateRun has been active for more than 2 hours.
+              Check the Run phase and worker Job pods for hang/backoff.
+{{- end }}

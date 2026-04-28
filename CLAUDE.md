@@ -69,8 +69,19 @@ Tracked in [`docs/impl/0001-renovate-operator-v010-implementation.md`](docs/impl
   - `RenovateScan`: parses cron via robfig/cron/v3, resolves Platform, creates Run with frozen snapshots at fire time, GCs old terminal Runs, surfaces Scheduled condition. Watches Scan + Platform (mapped) + Run (owned).
   - `RenovateRun`: state machine Pending → Discovering → Running → {Succeeded, Failed}; mirrors credential Secret, builds shard ConfigMap and worker Job. Watches Run + owned Job + ConfigMap + Secret. Pluggable `PlatformClientFactory` for tests.
   - `cmd/main.go` wires all three with new `--operator-namespace` flag (defaults to `$POD_NAMESPACE`, falls back to `renovate-system`).
+- Phase 5 (observability): `internal/observability` ships metrics (7 collectors with `{scan, platform, result}` labels), OTLP gRPC tracing with no-op fallback when `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, log-bridge attaching `trace_id`/`span_id` to logr, and `net/http/pprof` on a configurable bind. Wired in `cmd/main.go` via `--pprof-bind-address`.
+- Phase 6.1 (chart values surface): `dist/chart/values.yaml` rewritten to the DESIGN-0001 surface (image, replicaCount/leaderElect, resources, metrics{serviceMonitor,prometheusRule}, tracing, pprof, logging, full `defaultScan` block). The legacy `controllerManager` block is retained for backward compat with the kubebuilder-scaffolded `manager.yaml` template (will be reconciled in 6.3).
+- Phase 6.2 (extra templates): `dist/chart/templates/extra/{default-scan,servicemonitor,prometheusrule}.yaml` added with proper gating, `helm.sh/resource-policy: keep` on the default scan, and a fail-fast template guard for `defaultScan.enabled=true && defaultScan.platformRef.name == ""`. `helm lint` and `helm template` both verified.
 
-Phase 5 (observability), Phase 6 (helm), Phase 7 (testing depth), Phase 8 (CI/release), Phase 9 (homelab cutover) remain.
+Phase 6.3+ (cert-manager strip + chart NOTES, contrib tree, observability custom-lint), Phase 7 (testing depth), Phase 8 (CI/release), Phase 9 (homelab cutover) remain.
+
+### Chart regeneration gotcha
+
+`kubebuilder edit --plugins=helm/v1-alpha --force` resets `dist/chart/values.yaml` and several templates to scaffold defaults. After running it:
+
+1. Restore `dist/chart/values.yaml` (DESIGN-0001 surface).
+2. Re-strip `dist/chart/templates/certmanager/` once Phase 6.3 lands.
+3. The `dist/chart/templates/extra/` directory is preserved — kubebuilder doesn't touch it.
 
 ## Known stale things to fix when convenient
 
