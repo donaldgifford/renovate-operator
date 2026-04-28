@@ -167,8 +167,9 @@ Implements the `Client` interface for GitHub (App auth) and Forgejo (token), inc
   - [x] `client.go`: `code.gitea.io/sdk/gitea`; token-authenticated. 30 req/sec rate limiter per Resolved Q2; same classifyErr → ErrTransient/ErrPermanent/ErrUnauthorized/ErrNotFound mapping as the GitHub client.
   - [x] `discover.go`: `/api/v1/orgs/{owner}/repos` paginated with /users/{user}/repos fallback on 404. Skip-forks/skip-archived + glob patterns applied client-side; topics deferred (Forgejo SDK doesn't surface topics on the repo struct).
   - [x] `has_config.go`: contents API probe across `platform.ConfigPaths`; same first-hit-wins shape as GitHub.
-- [ ] `dnaeon/go-vcr` fixtures under `internal/platform/{github,forgejo}/testdata/` covering: happy path (≥ 50 repos paginated), 404 on `HasRenovateConfig`, 401/403 auth failure, 429/secondary rate limit with retry-after, malformed JSON.
-- [ ] Unit tests against the VCR fixtures for both clients.
+- [x] ~~`dnaeon/go-vcr` fixtures~~ → **httptest fake servers** under `internal/platform/{github,forgejo}/client_test.go` covering: happy path (60 repos paginated for GitHub), 404 on `HasRenovateConfig`, 401/403 auth failure, 429 rate limit (verifying `*RateLimitedError` and `errors.Is(err, ErrTransient)`), malformed JSON (verifying it doesn't classify as transient), 5xx → ErrTransient, /orgs/{owner} 404 → /users/{owner} fallback.
+  - **Decision:** dropped VCR for unit tests. VCR's value is *replaying recorded real-API responses*, but we have no real Forgejo or GitHub Enterprise instance to record against during dev, and recording against github.com pollutes the recordings with installation tokens and live rate-limit headers. httptest fakes write the API shape inline in the test body — they're deterministic, easier to read, and don't require a fixtures regeneration story. VCR may still be added in Phase 7 e2e if we need to replay recorded fixtures from the homelab Forgejo instance.
+- [x] Unit tests against the httptest fakes for both clients.
 
 #### Success Criteria
 

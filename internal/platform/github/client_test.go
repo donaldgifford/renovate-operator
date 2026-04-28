@@ -227,6 +227,90 @@ func TestUnauthorizedClassifies(t *testing.T) {
 	}
 }
 
+func TestRateLimitedClassifies(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+		},
+	}
+	c := newFakeClient(t, handlers)
+
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	var rl *platform.RateLimitedError
+	if !errors.As(err, &rl) {
+		t.Fatalf("err = %v, want *RateLimitedError", err)
+	}
+	if !errors.Is(err, platform.ErrTransient) {
+		t.Errorf("RateLimitedError should be ErrTransient, got %v", err)
+	}
+}
+
+func TestMalformedJSONIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{not valid json[`))
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("expected error on malformed JSON")
+	}
+	if errors.Is(err, platform.ErrTransient) {
+		t.Errorf("malformed JSON should NOT be ErrTransient: %v", err)
+	}
+}
+
+func TestDiscover_FiftyReposPaginated(t *testing.T) {
+	t.Parallel()
+
+	// Two pages × 30 + 1 partial page so the pagination loop terminates.
+	makePage := func(start, end int) string {
+		var sb strings.Builder
+		sb.WriteString("[")
+		for i := start; i < end; i++ {
+			if i > start {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, `{"id":%d,"full_name":"o/repo-%d","default_branch":"main"}`, i, i)
+		}
+		sb.WriteString("]")
+		return sb.String()
+	}
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, r *http.Request) {
+			page := r.URL.Query().Get("page")
+			switch page {
+			case "", "1":
+				w.Header().Set("Link", `<http://x/?page=2>; rel="next"`)
+				_, _ = w.Write([]byte(makePage(0, 30)))
+			case "2":
+				w.Header().Set("Link", `<http://x/?page=3>; rel="next"`)
+				_, _ = w.Write([]byte(makePage(30, 60)))
+			case "3":
+				_, _ = w.Write([]byte(`[]`))
+			default:
+				http.NotFound(w, r)
+			}
+		},
+	}
+	c := newFakeClient(t, handlers)
+
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err != nil {
+		t.Fatalf("Discover err = %v", err)
+	}
+	if len(got) != 60 {
+		t.Errorf("Discover returned %d repos, want 60", len(got))
+	}
+}
+
 func TestServerErrorClassifiesAsTransient(t *testing.T) {
 	t.Parallel()
 
