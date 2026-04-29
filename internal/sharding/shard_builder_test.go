@@ -246,3 +246,24 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+// BenchmarkBuild covers the realistic scaling envelope for v0.1.0:
+// 200 repos is the design's "large" run (DESIGN-0001 § Sharding) and 5000
+// stretches well past anything a homelab will ever hit, exercising the
+// gzip path that fires for large shards. Both rows run with the same
+// homelab-typical bounds (max 5 workers, 50 repos each).
+func BenchmarkBuild(b *testing.B) {
+	bounds := sharding.WorkerBounds{MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50}
+
+	for _, n := range []int{200, 5000} {
+		repos := reposN(n)
+		b.Run(fmt.Sprintf("repos=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := sharding.Build(repos, bounds); err != nil {
+					b.Fatalf("Build err = %v", err)
+				}
+			}
+		})
+	}
+}
