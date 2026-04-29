@@ -14,6 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package utils holds helpers for the kind-based e2e suite under
+// test/e2e/. The helpers wrap exec.Command + GinkgoWriter logging so
+// specs can call into kubectl/helm/kind without re-implementing
+// stderr/stdout plumbing in every BeforeSuite.
 package utils
 
 import (
