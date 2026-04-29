@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -652,5 +653,142 @@ func TestMirrorCredential_UpdatesExisting(t *testing.T) {
 	}
 	if _, hasStale := updated.Data["stale"]; hasStale {
 		t.Error("update should have replaced data; stale key still present")
+	}
+}
+
+// ioErrReconciler builds a RenovateRunReconciler whose fake client
+// surfaces injected IO errors through interceptors. Used to assert the
+// IO-helpers' error-wrapping contract.
+func ioErrReconciler(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) *RenovateRunReconciler {
+	t.Helper()
+	scheme := newRunScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&renovatev1alpha1.RenovateRun{}).
+		WithInterceptorFuncs(funcs).
+		Build()
+	return &RenovateRunReconciler{
+		Client:            cli,
+		Scheme:            scheme,
+		Clock:             clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
+		OperatorNamespace: "renovate-system",
+	}
+}
+
+func TestMirrorCredential_GetSourceErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, src := runFixture("mirror-get-err", "team-ns", "renovate-system")
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			// Only intercept the source-secret Get. Mirror Get is in another namespace.
+			if key.Namespace == "renovate-system" && key.Name == "creds" {
+				return fmt.Errorf("apiserver flake")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}, run, src)
+
+	_, err := r.mirrorCredential(context.Background(), run)
+	if err == nil {
+		t.Fatal("mirrorCredential err = nil")
+	}
+	if !strings.Contains(err.Error(), "get source secret") {
+		t.Errorf("err = %v, want wrapped 'get source secret'", err)
+	}
+}
+
+func TestMirrorCredential_CreateErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, src := runFixture("mirror-create-err", "team-ns", "renovate-system")
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return fmt.Errorf("apiserver wedged")
+		},
+	}, run, src)
+
+	_, err := r.mirrorCredential(context.Background(), run)
+	if err == nil {
+		t.Fatal("mirrorCredential err = nil")
+	}
+	if !strings.Contains(err.Error(), "create mirrored secret") {
+		t.Errorf("err = %v, want wrapped 'create mirrored secret'", err)
+	}
+}
+
+func TestEnsureShardConfigMap_GetErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("shard-get-err", "team-ns", "renovate-system")
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			// Inject error on the shard ConfigMap Get.
+			if _, ok := obj.(*corev1.ConfigMap); ok {
+				return fmt.Errorf("apiserver flake")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}, run)
+
+	_, _, err := r.ensureShardConfigMap(context.Background(), run,
+		[]platform.Repository{{Slug: "team-ns/a"}})
+	if err == nil {
+		t.Fatal("ensureShardConfigMap err = nil")
+	}
+	if !strings.Contains(err.Error(), "get shard CM") {
+		t.Errorf("err = %v, want wrapped 'get shard CM'", err)
+	}
+}
+
+func TestEnsureShardConfigMap_InvalidBoundsError(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("shard-bad-bounds", "team-ns", "renovate-system")
+	// MaxWorkers < MinWorkers — both non-zero so the function-local
+	// substitutions don't fire. sharding.Build then rejects.
+	run.Spec.ScanSnapshot.Workers.MinWorkers = 5
+	run.Spec.ScanSnapshot.Workers.MaxWorkers = 2
+
+	r := newRunReconciler(t, nil, run)
+
+	_, _, err := r.ensureShardConfigMap(context.Background(), run,
+		[]platform.Repository{{Slug: "team-ns/a"}})
+	if err == nil {
+		t.Fatal("ensureShardConfigMap err = nil for bad bounds")
+	}
+	if !strings.Contains(err.Error(), "shard build") {
+		t.Errorf("err = %v, want wrapped 'shard build'", err)
+	}
+}
+
+func TestEnsureWorkerJob_GetErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("job-get-err", "team-ns", "renovate-system")
+
+	mirrored := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-creds", Namespace: run.Namespace},
+		Data:       map[string][]byte{"private-key.pem": []byte("FAKE")},
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-shards", Namespace: run.Namespace},
+		Data:       map[string]string{"shard-0.json": "{}"},
+	}
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*batchv1.Job); ok {
+				return fmt.Errorf("apiserver flake")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}, run)
+
+	_, err := r.ensureWorkerJob(context.Background(), run, mirrored, cm, 1)
+	if err == nil {
+		t.Fatal("ensureWorkerJob err = nil")
+	}
+	if !strings.Contains(err.Error(), "get worker Job") {
+		t.Errorf("err = %v, want wrapped 'get worker Job'", err)
 	}
 }
