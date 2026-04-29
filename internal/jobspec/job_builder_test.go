@@ -19,6 +19,7 @@ package jobspec_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -449,4 +450,28 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// BenchmarkBuildWorkerJob exercises the second half of the Reconcile hot
+// path (sharding.Build is the first). Both rows use a fully-realistic
+// fixture with a non-trivial RenovateConfig override and PresetRepoRef
+// extends-prepend, so JSON marshal/unmarshal and env assembly are
+// represented. ActualWorkers=1 and =16 cover the two ends of the
+// homelab-typical shard count.
+func BenchmarkBuildWorkerJob(b *testing.B) {
+	cm, cred := ghCMAndCred()
+	run := ghRun()
+
+	for _, w := range []int32{1, 16} {
+		b.Run(fmt.Sprintf("workers=%d", w), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
+					Run: run, ShardConfigMap: cm, ActualWorkers: w, Credential: cred,
+				}); err != nil {
+					b.Fatalf("BuildWorkerJob err = %v", err)
+				}
+			}
+		})
+	}
 }
