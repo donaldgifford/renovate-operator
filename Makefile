@@ -166,9 +166,17 @@ chart-clean: ## Remove kubebuilder-scaffolded cert-manager template (re-emitted 
 	@echo "chart-clean: stripped dist/chart/templates/certmanager (v0.1.0 ships no webhooks)"
 
 .PHONY: chart-lint
-chart-lint: ## helm lint the operator chart (defaultScan.platformRef.name guard fires by default).
-	helm lint dist/chart
+chart-lint: ## helm lint the operator chart and assert the defaultScan.platformRef.name guard.
 	helm lint dist/chart --set defaultScan.enabled=false
+	helm lint dist/chart --set defaultScan.enabled=true --set defaultScan.platformRef.name=github
+	@# `helm lint` treats template fail() as INFO not error, so we use
+	@# `helm template` to assert the guard truly aborts when the
+	@# platformRef.name is empty + defaultScan is enabled.
+	@if helm template dist/chart --set defaultScan.enabled=true >/dev/null 2>&1; then \
+		echo "chart-lint: defaultScan.enabled=true with empty platformRef.name should have failed"; \
+		exit 1; \
+	fi
+	@echo "chart-lint: fail-fast guard verified"
 
 .PHONY: metrics-coverage-lint
 metrics-coverage-lint: ## Fail if a metric in internal/observability/metrics.go is not referenced anywhere under contrib/ or the chart's PrometheusRule.
