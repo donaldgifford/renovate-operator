@@ -634,9 +634,10 @@ func TestMirrorCredential_UpdatesExisting(t *testing.T) {
 	run, src := runFixture("mirror-update", "team-ns", "renovate-system")
 
 	// Pre-existing mirror with old data — mirrorCredential should update it.
+	// Mirror name is `renovate-creds-<runName>` per credentials.MirrorName.
 	dst := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      run.Name + "-creds",
+			Name:      "renovate-creds-" + run.Name,
 			Namespace: run.Namespace,
 		},
 		Data: map[string][]byte{"stale": []byte("data")},
@@ -790,5 +791,78 @@ func TestEnsureWorkerJob_GetErrorWrapped(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "get worker Job") {
 		t.Errorf("err = %v, want wrapped 'get worker Job'", err)
+	}
+}
+
+func TestMirrorCredential_UpdateErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, src := runFixture("mirror-update-err", "team-ns", "renovate-system")
+	// Pre-create the mirror so mirrorCredential takes the update branch.
+	dst := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "renovate-creds-" + run.Name, Namespace: run.Namespace,
+		},
+		Data: map[string][]byte{"stale": []byte("data")},
+	}
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Update: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.UpdateOption) error {
+			return fmt.Errorf("apiserver wedged")
+		},
+	}, run, src, dst)
+
+	_, err := r.mirrorCredential(context.Background(), run)
+	if err == nil {
+		t.Fatal("mirrorCredential err = nil")
+	}
+	if !strings.Contains(err.Error(), "update mirrored secret") {
+		t.Errorf("err = %v, want wrapped 'update mirrored secret'", err)
+	}
+}
+
+func TestEnsureShardConfigMap_CreateErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("shard-create-err", "team-ns", "renovate-system")
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return fmt.Errorf("apiserver wedged")
+		},
+	}, run)
+
+	_, _, err := r.ensureShardConfigMap(context.Background(), run,
+		[]platform.Repository{{Slug: "team-ns/a"}})
+	if err == nil {
+		t.Fatal("ensureShardConfigMap err = nil")
+	}
+	if !strings.Contains(err.Error(), "create shard CM") {
+		t.Errorf("err = %v, want wrapped 'create shard CM'", err)
+	}
+}
+
+func TestEnsureWorkerJob_CreateErrorWrapped(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("job-create-err", "team-ns", "renovate-system")
+	mirrored := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-creds", Namespace: run.Namespace},
+		Data:       map[string][]byte{"private-key.pem": []byte("FAKE")},
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-shards", Namespace: run.Namespace},
+		Data:       map[string]string{"shard-0.json": "{}"},
+	}
+
+	r := ioErrReconciler(t, interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return fmt.Errorf("apiserver wedged")
+		},
+	}, run)
+
+	_, err := r.ensureWorkerJob(context.Background(), run, mirrored, cm, 1)
+	if err == nil {
+		t.Fatal("ensureWorkerJob err = nil")
+	}
+	if !strings.Contains(err.Error(), "create worker Job") {
+		t.Errorf("err = %v, want wrapped 'create worker Job'", err)
 	}
 }
