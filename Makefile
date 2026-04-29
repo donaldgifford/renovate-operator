@@ -69,6 +69,11 @@ test-coverage: test ## Print per-package coverage from cover.out (run after `mak
 	@go tool cover -func=cover.out | awk '{ pkg=$$1; sub(/\/[^/]*$$/,"",pkg); print pkg, $$NF }' | \
 		grep -v '^total:' | sort -u | column -t
 
+.PHONY: bench
+bench: ## Run hot-path benchmarks (sharding.Build + jobspec.BuildWorkerJob).
+	go test -bench '^Benchmark' -benchmem -benchtime 2s -run '^$$' \
+		./internal/sharding/ ./internal/jobspec/
+
 # e2e tests run against a Kind cluster. v0.1.0 ships no webhooks
 # (ADR-0006) so cert-manager is not installed. The harness deploys the
 # operator via the Helm chart (not kustomize), with the locally-built
