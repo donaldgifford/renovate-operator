@@ -81,7 +81,7 @@ func (r *RenovatePlatformReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		// Status update conflicts are common; surface as transient.
 		if apierrors.IsConflict(updateErr) {
 			log.V(1).Info("status conflict, requeueing", "platform", req.Name)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterStatusConflict}, nil
 		}
 		log.Error(updateErr, "status update failed", "platform", req.Name)
 		if err == nil {

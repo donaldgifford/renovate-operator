@@ -87,7 +87,7 @@ func (r *RenovateScanReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if updateErr := r.Status().Update(ctx, &scan); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			log.V(1).Info("status conflict, requeueing", "scan", req.String())
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterStatusConflict}, nil
 		}
 		log.Error(updateErr, "status update failed", "scan", req.String())
 		if err == nil {

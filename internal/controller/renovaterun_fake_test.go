@@ -24,12 +24,15 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
@@ -524,6 +527,73 @@ func TestReconcile_UnknownPhaseErrors(t *testing.T) {
 		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
 	if err == nil {
 		t.Fatal("Reconcile err = nil, want unknown-phase error")
+	}
+}
+
+// runReconcilerWithInterceptor wires a RenovateRunReconciler whose underlying
+// fake client routes every Status().Update through funcs. The terminal phase
+// fixture is used so the inner reconcile() is a no-op and the assertion is
+// purely about the outer Reconcile wrapper's error/conflict handling.
+func runReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) *RenovateRunReconciler {
+	t.Helper()
+	scheme := newRunScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&renovatev1alpha1.RenovateRun{}).
+		WithInterceptorFuncs(funcs).
+		Build()
+
+	return &RenovateRunReconciler{
+		Client:            cli,
+		Scheme:            scheme,
+		Clock:             clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
+		OperatorNamespace: "renovate-system",
+	}
+}
+
+func TestReconcile_StatusConflictRequeues(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("conflict", "team-ns", "renovate-system")
+	run.Status.Phase = renovatev1alpha1.RunPhaseSucceeded
+
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovateruns"},
+		run.Name,
+		fmt.Errorf("optimistic concurrency"),
+	)
+
+	r := runReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return conflict
+		},
+	}, run)
+
+	res, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+	if err != nil {
+		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Errorf("RequeueAfter = 0, want non-zero on status conflict")
+	}
+}
+
+func TestReconcile_StatusUpdateErrorPropagates(t *testing.T) {
+	t.Parallel()
+	run, _ := runFixture("update-err", "team-ns", "renovate-system")
+	run.Status.Phase = renovatev1alpha1.RunPhaseSucceeded
+
+	r := runReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return fmt.Errorf("apiserver unavailable")
+		},
+	}, run)
+
+	_, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+	if err == nil {
+		t.Fatal("Reconcile err = nil, want propagated update error")
 	}
 }
 

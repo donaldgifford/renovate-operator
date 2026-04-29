@@ -49,6 +49,11 @@ import (
 // (rate-limits, network blips, missing source Secret).
 const requeueAfterRunTransient = 30 * time.Second
 
+// requeueAfterStatusConflict is the cadence for retrying after a status
+// optimistic-concurrency conflict — short, since we expect to win on the
+// next read.
+const requeueAfterStatusConflict = time.Second
+
 // RenovateRunReconciler reconciles a RenovateRun through its state machine.
 //
 //	Pending → Discovering → Running → {Succeeded, Failed}
@@ -114,7 +119,7 @@ func (r *RenovateRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if updateErr := r.Status().Update(ctx, &run); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			log.V(1).Info("status conflict, requeueing", "run", req.String())
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterStatusConflict}, nil
 		}
 		log.Error(updateErr, "status update failed", "run", req.String())
 		if err == nil {
