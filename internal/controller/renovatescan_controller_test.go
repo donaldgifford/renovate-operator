@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
+	"github.com/donaldgifford/renovate-operator/internal/conditions"
 )
 
 var _ = Describe("RenovateScan Controller", func() {
@@ -91,6 +92,35 @@ var _ = Describe("RenovateScan Controller", func() {
 			r := &RenovateScanReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: scanKey})
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("schedules the Scan when its Platform is Ready", func() {
+			By("marking the Platform Ready=True via Status update")
+			plat := &renovatev1alpha1.RenovatePlatform{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platformName}, plat)).To(Succeed())
+			conditions.MarkTrue(&plat.Status.Conditions,
+				conditions.TypeReady, conditions.ReasonCredentialsResolved, "ok",
+				plat.Generation)
+			Expect(k8sClient.Status().Update(ctx, plat)).To(Succeed())
+
+			By("reconciling the Scan once")
+			r := &RenovateScanReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: scanKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically(">", 0),
+				"Scheduled Scan should have a positive RequeueAfter pointing at next fire")
+
+			By("inspecting the Scan's Ready condition")
+			updated := &renovatev1alpha1.RenovateScan{}
+			Expect(k8sClient.Get(ctx, scanKey, updated)).To(Succeed())
+			ready := conditions.Get(updated.Status.Conditions, conditions.TypeReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			Expect(ready.Reason).To(Equal(conditions.ReasonNextRunComputed))
+
+			scheduled := conditions.Get(updated.Status.Conditions, conditions.TypeScheduled)
+			Expect(scheduled).NotTo(BeNil())
+			Expect(scheduled.Status).To(Equal(metav1.ConditionTrue))
 		})
 	})
 })
