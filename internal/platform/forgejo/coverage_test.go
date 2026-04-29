@@ -181,3 +181,53 @@ func TestHasRenovateConfig_PermanentErrorPropagates(t *testing.T) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 }
+
+// TestDiscover_UnexpectedStatusIsPermanent covers the default ErrPermanent
+// fall-through in classifyErr — a 4xx that is none of 401/403/404/429.
+// Forgejo returns 422 on a malformed request; the operator surfaces that
+// as permanent so the run controller marks the Run failed instead of
+// requeueing forever.
+func TestDiscover_UnexpectedStatusIsPermanent(t *testing.T) {
+	t.Parallel()
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "unprocessable", http.StatusUnprocessableEntity)
+		},
+	}
+	c := newClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("err = nil")
+	}
+	if !errors.Is(err, platform.ErrPermanent) {
+		t.Errorf("err = %v, want ErrPermanent", err)
+	}
+}
+
+// TestDiscover_NetworkErrorIsTransient covers the "no HTTP response"
+// branch in classifyErr — the request never reaches the server, so resp
+// is nil. Closing the server before the call simulates a connection
+// refused.
+func TestDiscover_NetworkErrorIsTransient(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"10.0.0"}`))
+	}))
+
+	c, err := forgejo.New(
+		forgejo.Auth{BaseURL: srv.URL, Token: "fake"},
+		forgejo.WithRateLimit(rate.Inf, 1),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	srv.Close() // server gone — subsequent calls dial-fail.
+
+	_, err = c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("err = nil after server close")
+	}
+	if !errors.Is(err, platform.ErrTransient) {
+		t.Errorf("err = %v, want ErrTransient (network failure)", err)
+	}
+}

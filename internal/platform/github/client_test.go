@@ -346,3 +346,125 @@ func TestDiscover_RequiresOwner(t *testing.T) {
 		t.Error("expected error for empty Owner")
 	}
 }
+
+// TestUnexpectedStatusIsPermanent covers the default ErrPermanent
+// fall-through in classifyErr — a 4xx that's not 401/403/404/429 lands
+// in the catch-all `return ErrPermanent`. 422 is what GitHub uses on
+// validation failures.
+func TestUnexpectedStatusIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "validation failed", http.StatusUnprocessableEntity)
+		},
+		"GET /api/v3/users/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "validation failed", http.StatusUnprocessableEntity)
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("err = nil")
+	}
+	if !errors.Is(err, platform.ErrPermanent) {
+		t.Errorf("err = %v, want ErrPermanent", err)
+	}
+}
+
+// TestNotFoundClassifies covers the 404 branch in classifyErr when the
+// HasRenovateConfig probe lands a 404 on every config filename — which
+// is the success path (returns false, nil) and so doesn't hit
+// classifyErr's NotFound branch. Use a bare-Discover at a missing user
+// to exercise the path: org returns 404 → fallback to user → user 404
+// returns ErrNotFound.
+func TestNotFoundClassifies(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/missing/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"GET /api/v3/users/missing/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "missing"})
+	if err == nil {
+		t.Fatal("err = nil")
+	}
+	if !errors.Is(err, platform.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestForbiddenClassifies covers the 403 branch alongside the existing
+// 401 test. Forbidden is the more common GitHub auth-failure shape
+// (e.g., expired tokens, IP allowlists).
+func TestForbiddenClassifies(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if !errors.Is(err, platform.ErrUnauthorized) {
+		t.Errorf("err = %v, want ErrUnauthorized", err)
+	}
+}
+
+// TestTypedRateLimitErrorClassifies covers the typed *RateLimitError path
+// in classifyErr — go-github constructs this when the response is 403 +
+// X-RateLimit-Remaining: 0 + body message "API rate limit exceeded for ".
+// The classifier should map it to *platform.RateLimitedError, not the
+// generic 403 ErrUnauthorized branch.
+func TestTypedRateLimitErrorClassifies(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Reset", "1700000000")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"API rate limit exceeded for 1.2.3.4","documentation_url":"https://docs.github.com/v3"}`))
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("err = nil")
+	}
+	var rle *platform.RateLimitedError
+	if !errors.As(err, &rle) {
+		t.Errorf("err = %v, want *RateLimitedError", err)
+	}
+}
+
+// TestAbuseRateLimitErrorClassifies covers the typed *AbuseRateLimitError
+// path. go-github constructs this when status is 403 and the body's
+// documentation_url ends with "/v3/#abuse-rate-limits". A Retry-After
+// header is optional but exercised here.
+func TestAbuseRateLimitErrorClassifies(t *testing.T) {
+	t.Parallel()
+
+	handlers := map[string]http.HandlerFunc{
+		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"You have triggered an abuse detection mechanism","documentation_url":"https://docs.github.com/v3/#abuse-rate-limits"}`))
+		},
+	}
+	c := newFakeClient(t, handlers)
+	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
+	if err == nil {
+		t.Fatal("err = nil")
+	}
+	var rle *platform.RateLimitedError
+	if !errors.As(err, &rle) {
+		t.Errorf("err = %v, want *RateLimitedError", err)
+	}
+}
