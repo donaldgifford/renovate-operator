@@ -277,7 +277,7 @@ Unit + envtest layered tests are landed throughout phases 1–5. This phase is t
 
 #### Tasks
 
-- [x] kind-based e2e harness skeleton in `test/e2e/` is refactored: cert-manager hook stripped (v0.1.0 ships no webhooks per ADR-0006); `BeforeSuite` builds the operator image, loads it into kind, and `helm upgrade --install`s the chart with `defaultScan.enabled=false`; `AfterSuite` runs `helm uninstall` + namespace delete. `make test-e2e` now wraps `CERT_MANAGER_INSTALL_SKIP=true`. Smoke specs verify pod runs, all three CRDs register, and the manager logs `Starting manager`.
+- [x] kind-based e2e harness skeleton in `test/e2e/` is refactored: cert-manager hook stripped (v0.1.0 ships no webhooks per ADR-0006); `BeforeSuite` builds the operator image, loads it into kind, and `helm upgrade --install`s the chart with `defaultScan.enabled=false`; `AfterSuite` runs `helm uninstall` + namespace delete. `make test-e2e` now wraps `CERT_MANAGER_INSTALL_SKIP=true`. Smoke specs verify pod runs, all three CRDs register, the manager logs `Starting manager`, and a Platform pointing at a non-existent Secret reaches `Ready=False, reason=SecretMissing` (real reconciler against a real apiserver — no Forgejo or worker stack required).
 - [ ] kind-based e2e scenarios on top of the harness (deferred to a follow-up; manual runbook in `test/manual/README.md` covers the v0.1.0 acceptance path against real GitHub.com + homelab Forgejo):
   - [ ] **GitHub stub e2e** (per [Resolved Q5](#q5--e2e-github-fidelity)): apply Platform → Scan with `* * * * *`; assert Run reaches `Succeeded` within 5 minutes; assert metrics increment.
   - [ ] **Forgejo e2e**: real Forgejo container in the kind cluster (image is small); assert end-to-end run.
