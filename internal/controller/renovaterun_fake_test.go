@@ -379,6 +379,37 @@ func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 	}
 }
 
+// TestRunReconcile_RequireConfigHasConfigErrorPropagates covers the
+// HasRenovateConfig error-path in the discoverRepos batch loop. A
+// transient error mid-batch should bubble out so discoverAndDispatch
+// classifies it correctly (transient -> requeue, not flip-to-Failed).
+func TestRunReconcile_RequireConfigHasConfigErrorPropagates(t *testing.T) {
+	t.Parallel()
+	run, src := runFixture("config-err", "team-ns", "renovate-system")
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	plat := &stubPlatformClient{
+		repos:     []platform.Repository{{Slug: "team-ns/a"}, {Slug: "team-ns/b"}},
+		configErr: platform.ErrTransient,
+	}
+	r := newRunReconciler(t, plat, run, src)
+
+	res, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+	if err != nil {
+		t.Fatalf("Reconcile err = %v", err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Errorf("transient HasRenovateConfig error: RequeueAfter = 0, want non-zero")
+	}
+
+	got := &renovatev1alpha1.RenovateRun{}
+	_ = r.Get(context.Background(),
+		types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, got)
+	if got.Status.Phase == renovatev1alpha1.RunPhaseFailed {
+		t.Error("transient HasRenovateConfig error should not flip to Failed")
+	}
+}
+
 func TestRunReconcile_MissingSourceSecretRequeues(t *testing.T) {
 	t.Parallel()
 	run, _ := runFixture("missing-secret", "team-ns", "renovate-system")
