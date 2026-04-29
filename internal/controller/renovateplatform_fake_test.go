@@ -22,14 +22,18 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -399,5 +403,67 @@ func TestSecretInOperatorNamespacePredicate(t *testing.T) {
 	}
 	if p.Generic(event.GenericEvent{Object: out}) {
 		t.Error("predicate.Generic out-of-NS = true, want false")
+	}
+}
+
+// platformReconcilerWithInterceptor wires a RenovatePlatformReconciler
+// whose underlying fake client routes Status().Update through funcs. Used
+// to exercise the outer Reconcile wrapper's conflict + non-conflict
+// update-error paths.
+func platformReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) *RenovatePlatformReconciler {
+	t.Helper()
+	scheme := newPlatformScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&renovatev1alpha1.RenovatePlatform{}).
+		WithInterceptorFuncs(funcs).
+		Build()
+	return &RenovatePlatformReconciler{
+		Client:            cli,
+		Scheme:            scheme,
+		OperatorNamespace: operatorNS,
+	}
+}
+
+func TestPlatformReconcile_StatusConflictRequeues(t *testing.T) {
+	t.Parallel()
+	plat := mkGitHubAppPlatform("conflict", "creds")
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovateplatforms"},
+		plat.Name,
+		fmt.Errorf("optimistic concurrency"),
+	)
+
+	r := platformReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return conflict
+		},
+	}, plat)
+
+	res, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+	if err != nil {
+		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Errorf("RequeueAfter = 0, want non-zero on status conflict")
+	}
+}
+
+func TestPlatformReconcile_StatusUpdateErrorPropagates(t *testing.T) {
+	t.Parallel()
+	plat := mkGitHubAppPlatform("update-err", "creds")
+
+	r := platformReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return fmt.Errorf("apiserver unavailable")
+		},
+	}, plat)
+
+	_, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+	if err == nil {
+		t.Fatal("Reconcile err = nil, want propagated update error")
 	}
 }

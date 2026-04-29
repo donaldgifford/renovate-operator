@@ -18,16 +18,20 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
@@ -433,5 +437,67 @@ func TestScansForPlatform_MapsCorrectScans(t *testing.T) {
 		if !got[want] {
 			t.Errorf("missing request for %q", want)
 		}
+	}
+}
+
+// scanReconcilerWithInterceptor builds a RenovateScanReconciler whose
+// fake client routes Status().Update through funcs. Used to exercise
+// the outer Reconcile wrapper's conflict + non-conflict update-error
+// paths without standing up an envtest.
+func scanReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) *RenovateScanReconciler {
+	t.Helper()
+	scheme := newScanScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&renovatev1alpha1.RenovateScan{}, &renovatev1alpha1.RenovateRun{}).
+		WithInterceptorFuncs(funcs).
+		Build()
+	return &RenovateScanReconciler{
+		Client: cli,
+		Scheme: scheme,
+		Clock:  clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
+	}
+}
+
+func TestScanReconcile_StatusConflictRequeues(t *testing.T) {
+	t.Parallel()
+	scan := mkScan("conflict", "team-ns", "missing", "0 4 * * *")
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovatescans"},
+		scan.Name,
+		fmt.Errorf("optimistic concurrency"),
+	)
+
+	r := scanReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return conflict
+		},
+	}, scan)
+
+	res, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+	if err != nil {
+		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Errorf("RequeueAfter = 0, want non-zero on status conflict")
+	}
+}
+
+func TestScanReconcile_StatusUpdateErrorPropagates(t *testing.T) {
+	t.Parallel()
+	scan := mkScan("update-err", "team-ns", "missing", "0 4 * * *")
+
+	r := scanReconcilerWithInterceptor(t, interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+			return fmt.Errorf("apiserver unavailable")
+		},
+	}, scan)
+
+	_, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+	if err == nil {
+		t.Fatal("Reconcile err = nil, want propagated update error")
 	}
 }
