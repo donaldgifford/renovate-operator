@@ -9,6 +9,7 @@
 # The label `release: kube-prometheus-stack` makes kube-prometheus-stack
 # Prometheus pick this PrometheusRule up automatically. Adjust to match
 # your stack's selector if different.
+---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

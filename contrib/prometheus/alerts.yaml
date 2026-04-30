@@ -6,6 +6,7 @@
 #
 # Apply with:
 #   kubectl apply -n monitoring -f contrib/prometheus/alerts.yaml
+---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
