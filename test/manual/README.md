@@ -198,3 +198,46 @@ helm uninstall renovate-operator -n renovate-system
 | Run stuck `Discovering` indefinitely | Check operator logs for rate-limit messages; the App may have hit its 4500/hr budget |
 | Run `Failed` with `no repositories matched discovery filter` | `discovery.filter` glob didn't hit any repos — try `kubectl logs -l job-name=...` for the underlying API response |
 | Worker Job `BackoffLimitExceeded` | Renovate CLI itself errored — `kubectl logs -l job-name=<name>-workers --all-containers` |
+
+## Repo handoff (one-time, post-cutover)
+
+These items live outside the codebase but are part of the v0.1.0 acceptance
+checklist. They cannot be committed; record them here so the homelab handoff
+captures them.
+
+### Branch protection on `main`
+
+Configure under repo Settings → Branches → Branch protection rules:
+
+- Require a pull request before merging (≥ 1 approving review).
+- Require status checks to pass before merging:
+  - `ci` (the workflow defined in `.github/workflows/ci.yml`).
+  - `test-e2e` (the workflow defined in `.github/workflows/test-e2e.yml`)
+    — required only when paths trigger it; configure as "non-required" if
+    the path filter would block merges of doc-only PRs.
+- Require branches to be up to date before merging.
+- Require linear history.
+- Do not allow bypassing the above settings.
+
+### Cosign keyless verification (one-off check after first release)
+
+Run from any machine with `cosign` installed after the first tagged
+release pipeline finishes:
+
+```bash
+cosign verify ghcr.io/donaldgifford/renovate-operator:v0.1.0 \
+  --certificate-identity-regexp 'https://github.com/donaldgifford/renovate-operator/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A successful verification confirms the keyless OIDC signing path wired
+in `.github/workflows/release.yml` works end-to-end.
+
+### Helm chart OCI pull (one-off check after first release)
+
+```bash
+helm pull oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.1.0
+```
+
+Confirms the `helm-chart` job in `release.yml` pushed the chart with the
+expected OCI ref shape.

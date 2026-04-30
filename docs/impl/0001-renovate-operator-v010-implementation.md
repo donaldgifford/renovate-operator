@@ -307,7 +307,7 @@ Workflows wired through `just`, multi-arch image with cosign + SBOM, OCI Helm ch
 - [x] `docker-bake.hcl` at the repo root with `default` (single-arch local), `ci` (multi-arch verify, no push), and `release` (multi-arch push to GHCR) targets. Variables: `REGISTRY` (defaults to ghcr.io/donaldgifford/renovate-operator), `TAG`, `VERSION`. CI's metadata-action merges in tag refs via the `bake-file-tags` output.
 - [x] `make build-installer` artifact attached to the release via `gh release upload`. The release job builds it pre-goreleaser so a single workflow run covers both flows.
 - [x] `dist/chart/values.yaml` `image.repository: ghcr.io/donaldgifford/renovate-operator` confirmed per [Resolved Q7](#q7--image-registry-path-and-image-build-mechanism). Chart.yaml hardened with home/sources/maintainers/keywords/icon and ArtifactHub annotations.
-- [ ] Branch protection on `main`: require PR reviews, require `ci` workflow passing. (Repo-side configuration, not committed — note in homelab handoff.)
+- [x] Branch protection on `main`: require PR reviews, require `ci` workflow passing. (Repo-side configuration, not committed; captured as a "Repo handoff" section in `test/manual/README.md` so the toggles to flip are documented for the homelab cutover.)
 
 #### Success Criteria
 
