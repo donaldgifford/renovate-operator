@@ -78,7 +78,21 @@ jobs:
 
       - name: Install Helm chart for project
         run: |
-          helm install my-release ./dist/chart --create-namespace --namespace kube-system
+          # The earlier `make docker-build IMG=kube:v0.1.0` step built the
+          # operator image as `kube:v0.1.0` and loaded it into the kind
+          # cluster — point the chart at that image with pullPolicy=Never
+          # so kind uses the loaded layer.
+          #
+          # defaultScan.enabled is the chart default (so it ships a working
+          # scan out of the box once a Platform is provided). The CI smoke
+          # install has no Platform, so disable it here — the chart's
+          # intentional fail-fast guard would otherwise abort.
+          helm install my-release ./dist/chart \
+            --create-namespace --namespace kube-system \
+            --set defaultScan.enabled=false \
+            --set controllerManager.container.image.repository=kube \
+            --set controllerManager.container.image.tag=v0.1.0 \
+            --set controllerManager.container.imagePullPolicy=Never
 
       - name: Check Helm release status
         run: |

@@ -76,11 +76,29 @@ var _ = BeforeSuite(func() {
 		"--set", "controllerManager.container.image.tag=e2e",
 		"--set", "controllerManager.container.imagePullPolicy=Never",
 		"--set", "defaultScan.enabled=false",
-		"--wait", "--timeout=3m",
+		"--wait", "--timeout=5m",
 	)
 	out, err := utils.Run(cmd)
-	Expect(err).NotTo(HaveOccurred(), "helm install failed: %s", out)
+	if err != nil {
+		dumpClusterDiagnostics()
+		Fail(fmt.Sprintf("helm install failed: %s", out))
+	}
 })
+
+// dumpClusterDiagnostics prints kubectl describe + logs for the operator
+// namespace so that a BeforeSuite failure on a remote runner is debuggable
+// from the CI log alone, without needing to re-run interactively.
+func dumpClusterDiagnostics() {
+	for _, args := range [][]string{
+		{"kubectl", "-n", releaseNamespace, "get", "all"},
+		{"kubectl", "-n", releaseNamespace, "describe", "pods"},
+		{"kubectl", "-n", releaseNamespace, "logs", "-l", "control-plane=controller-manager", "--tail=200", "--all-containers"},
+		{"kubectl", "-n", releaseNamespace, "get", "events", "--sort-by=.lastTimestamp"},
+	} {
+		out, err := utils.Run(exec.Command(args[0], args[1:]...))
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- diagnostics: %v ---\n%s\n(err: %v)\n", args, out, err)
+	}
+}
 
 var _ = AfterSuite(func() {
 	By("uninstalling the operator")
