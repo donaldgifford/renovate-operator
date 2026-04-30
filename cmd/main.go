@@ -210,7 +210,13 @@ func main() {
 
 	observability.Register()
 
-	tracerShutdown, err := observability.InitTracer(ctrl.SetupSignalHandler(), version)
+	// SetupSignalHandler can only be called once per process — calling it a
+	// second time panics with "close of closed channel" because it closes
+	// the SIGTERM/SIGINT channel on second invocation. Share the context
+	// between InitTracer and mgr.Start.
+	signalCtx := ctrl.SetupSignalHandler()
+
+	tracerShutdown, err := observability.InitTracer(signalCtx, version)
 	if err != nil {
 		setupLog.Error(err, "Failed to init tracer")
 	}
@@ -262,7 +268,7 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(signalCtx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
