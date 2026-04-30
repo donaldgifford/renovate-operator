@@ -1,7 +1,7 @@
 ---
 id: ADR-0004
 title: "Use metav1.Condition and Run child resources for status"
-status: Proposed
+status: Accepted
 author: donaldgifford
 created: 2026-04-26
 ---

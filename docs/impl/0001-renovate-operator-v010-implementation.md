@@ -331,7 +331,7 @@ Real cluster, real PRs.
 - [ ] Repeat for the Forgejo platform with a Scan against one Forgejo repo.
 - [ ] Import the four `contrib/grafana/dashboards/*.json` into the homelab Grafana; smoke-check operator + run dashboards.
 - [ ] Apply the `contrib/prometheus/alerts.yaml` to homelab Prometheus.
-- [ ] Status flips: RFC-0001 → Accepted; ADRs 0004–0008 → Accepted; DESIGN-0001 → Implemented; this IMPL doc → Completed.
+- [ ] Status flips: RFC-0001 → Accepted (pending homelab cutover); **ADRs 0004–0008 → Accepted (done — code reflects all five decisions, no point keeping them as `Proposed`)**; DESIGN-0001 → Implemented (pending homelab cutover); this IMPL doc → Completed (pending homelab cutover).
 - [ ] Pin Renovate image to the version that just shipped a real PR successfully (resolution from DESIGN-0001 — flip from `:latest` to a specific tag) before announcing externally.
 
 #### Success Criteria

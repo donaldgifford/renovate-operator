@@ -1,7 +1,7 @@
 ---
 id: ADR-0006
 title: "Multi-platform support (GitHub App and Forgejo) in v0.1.0"
-status: Proposed
+status: Accepted
 author: donaldgifford
 created: 2026-04-26
 ---

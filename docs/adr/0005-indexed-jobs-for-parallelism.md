@@ -1,7 +1,7 @@
 ---
 id: ADR-0005
 title: "Use Indexed Jobs for parallel Run workers"
-status: Proposed
+status: Accepted
 author: donaldgifford
 created: 2026-04-26
 ---

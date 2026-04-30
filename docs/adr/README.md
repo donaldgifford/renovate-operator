@@ -34,9 +34,9 @@ docz create adr "Your ADR Title"
 | ADR-0001 | Use kubebuilder for operator scaffolding | Accepted | 2026-04-26 | donaldgifford | [0001-use-kubebuilder-for-operator-scaffolding.md](0001-use-kubebuilder-for-operator-scaffolding.md) |
 | ADR-0002 | Adopt the kubebuilder Helm chart plugin | Accepted | 2026-04-26 | donaldgifford | [0002-adopt-kubebuilder-helm-chart-plugin.md](0002-adopt-kubebuilder-helm-chart-plugin.md) |
 | ADR-0003 | Multi-CRD architecture (Platform, Scan, Run) | Accepted | 2026-04-26 | donaldgifford | [0003-multi-crd-architecture.md](0003-multi-crd-architecture.md) |
-| ADR-0004 | Use metav1.Condition and Run child resources for status | Proposed | 2026-04-26 | donaldgifford | [0004-use-conditions-and-run-children-for-status.md](0004-use-conditions-and-run-children-for-status.md) |
-| ADR-0005 | Use Indexed Jobs for parallel Run workers | Proposed | 2026-04-26 | donaldgifford | [0005-indexed-jobs-for-parallelism.md](0005-indexed-jobs-for-parallelism.md) |
-| ADR-0006 | Multi-platform support (GitHub App and Forgejo) in v0.1.0 | Proposed | 2026-04-26 | donaldgifford | [0006-multi-platform-support.md](0006-multi-platform-support.md) |
-| ADR-0007 | Observability stack: Prometheus, OTel, structured logging, pprof | Proposed | 2026-04-26 | donaldgifford | [0007-observability-stack.md](0007-observability-stack.md) |
-| ADR-0008 | Ship a default RenovateScan via the Helm chart | Proposed | 2026-04-26 | donaldgifford | [0008-default-scan-via-helm-chart.md](0008-default-scan-via-helm-chart.md) |
+| ADR-0004 | Use metav1.Condition and Run child resources for status | Accepted | 2026-04-26 | donaldgifford | [0004-use-conditions-and-run-children-for-status.md](0004-use-conditions-and-run-children-for-status.md) |
+| ADR-0005 | Use Indexed Jobs for parallel Run workers | Accepted | 2026-04-26 | donaldgifford | [0005-indexed-jobs-for-parallelism.md](0005-indexed-jobs-for-parallelism.md) |
+| ADR-0006 | Multi-platform support (GitHub App and Forgejo) in v0.1.0 | Accepted | 2026-04-26 | donaldgifford | [0006-multi-platform-support.md](0006-multi-platform-support.md) |
+| ADR-0007 | Observability stack: Prometheus, OTel, structured logging, pprof | Accepted | 2026-04-26 | donaldgifford | [0007-observability-stack.md](0007-observability-stack.md) |
+| ADR-0008 | Ship a default RenovateScan via the Helm chart | Accepted | 2026-04-26 | donaldgifford | [0008-default-scan-via-helm-chart.md](0008-default-scan-via-helm-chart.md) |
 <!-- END DOCZ AUTO-GENERATED -->

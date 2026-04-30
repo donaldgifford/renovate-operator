@@ -1,7 +1,7 @@
 ---
 id: ADR-0007
 title: "Observability stack: Prometheus, OTel, structured logging, pprof"
-status: Proposed
+status: Accepted
 author: donaldgifford
 created: 2026-04-26
 ---

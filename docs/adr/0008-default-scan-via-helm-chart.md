@@ -1,7 +1,7 @@
 ---
 id: ADR-0008
 title: "Ship a default RenovateScan via the Helm chart"
-status: Proposed
+status: Accepted
 author: donaldgifford
 created: 2026-04-26
 ---
