@@ -73,7 +73,7 @@ var _ = Describe("Operator smoke", Ordered, func() {
 
 // Platform reconciler smoke — covers the v0.1.0 happy-path acceptance for
 // the Platform controller's main contract: a Platform pointing at a
-// non-existent Secret reaches Ready=False with reason=SecretMissing. No
+// non-existent Secret reaches Ready=False with reason=SecretNotFound. No
 // Forgejo, no Renovate worker, no real network — pure operator code paths
 // against a real apiserver.
 var _ = Describe("Platform reconciler", Ordered, func() {
@@ -112,14 +112,14 @@ spec:
 		Expect(err).NotTo(HaveOccurred(), "kubectl apply RenovatePlatform")
 
 		// Operator should observe the Platform, fail to resolve the Secret,
-		// and mark Ready=False with reason=SecretMissing.
-		verifySecretMissing := func(g Gomega) {
+		// and mark Ready=False with reason=SecretNotFound.
+		verifySecretNotFound := func(g Gomega) {
 			cmd := exec.Command("kubectl", "get", "renovateplatform", platformName,
 				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}")
 			out, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred(), "kubectl get platform: %v", err)
-			g.Expect(out).To(Equal("SecretMissing"), "Ready reason = %q, want SecretMissing", out)
+			g.Expect(out).To(Equal("SecretNotFound"), "Ready reason = %q, want SecretNotFound", out)
 		}
-		Eventually(verifySecretMissing).Should(Succeed())
+		Eventually(verifySecretNotFound).Should(Succeed())
 	})
 })
