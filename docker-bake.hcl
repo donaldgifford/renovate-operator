@@ -46,6 +46,21 @@ target "_common" {
   }
 }
 
+// Stub providing default `tags` for local `docker buildx bake`. CI
+// runs override this target via docker/metadata-action's
+// bake-file-tags output so the bake pushes the same semver-derived
+// image refs the metadata-action emits — which is what cosign then
+// signs in the next step. operator-release inherits from this and
+// does NOT declare tags itself, so the override actually takes
+// effect (with HCL inheritance, a child's tags list replaces the
+// parent's, not extends it).
+target "docker-metadata-action" {
+  tags = [
+    "${REGISTRY}:${TAG}",
+    "${REGISTRY}:latest",
+  ]
+}
+
 target "operator" {
   inherits = ["_common"]
   tags     = ["${REGISTRY}:${TAG}"]
@@ -64,11 +79,9 @@ target "operator-ci" {
 }
 
 target "operator-release" {
-  inherits = ["_common"]
-  tags = [
-    "${REGISTRY}:${TAG}",
-    "${REGISTRY}:latest",
-  ]
+  inherits = ["_common", "docker-metadata-action"]
+  // tags intentionally omitted — they come from docker-metadata-action
+  // (defaults for local bake; CI overrides via metadata-action).
   platforms = [
     "linux/amd64",
     "linux/arm64",
