@@ -60,6 +60,14 @@ jobs:
       - name: Build kustomize installer
         run: make build-installer IMG=ghcr.io/donaldgifford/renovate-operator:${{ needs.bump-version.outputs.tag }}
 
+      - name: Restore kustomize image edit (clean tree for goreleaser)
+        # `make build-installer` ran `kustomize edit set image controller=...`
+        # in config/manager/, modifying kustomization.yaml in place. The
+        # dist/install.yaml output already captures the edit, so the
+        # source-tree change isn't needed any more — and goreleaser's
+        # dirty-state precheck will refuse to run while it's there.
+        run: git checkout -- config/manager/kustomization.yaml
+
       - name: Install syft (SBOM generator)
         uses: anchore/sbom-action/download-syft@v0
 

@@ -1,6 +1,11 @@
 ---
 version: 2
 
+# Use a non-default dist directory. The kubebuilder helm plugin owns
+# dist/chart/ and goreleaser's --clean would wipe it (which both deletes
+# the chart from the working tree and trips the dirty-state precheck).
+dist: dist-goreleaser
+
 builds:
   - id: renovate-operator
     binary: renovate-operator

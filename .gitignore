@@ -44,6 +44,10 @@ go.work.sum
 # Build directories
 build/
 
+# goreleaser output (configured via `dist:` in .goreleaser.yml so it
+# doesn't collide with kubebuilder's dist/chart/).
+dist-goreleaser/
+
 # Kubernetes Generated files - skip generated files, except for vendored files
 !vendor/**/zz_generated.*
 
