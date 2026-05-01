@@ -1,0 +1,199 @@
+---
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  bump-version:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.version }}
+      skipped: ${{ steps.bump.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: jefflinse/pr-semver-bump@v1.7.4
+        id: bump
+        name: Bump and Tag Version
+        with:
+          mode: bump
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          require-release-notes: false
+          major-label: major
+          minor-label: minor
+          patch-label: patch
+          noop-labels: "dont-release"
+          release-notes-prefix: "### RELEASE NOTES"
+          with-v: true
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: bump-version
+    if: needs.bump-version.outputs.skipped != 'true'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.bump-version.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build kustomize installer
+        run: make build-installer IMG=ghcr.io/donaldgifford/renovate-operator:${{ needs.bump-version.outputs.tag }}
+
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v7
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+
+      - name: Attach kustomize installer to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload '${{ needs.bump-version.outputs.tag }}' \
+            dist/install.yaml \
+            --clobber
+
+  docker:
+    name: Docker (multi-arch + cosign)
+    runs-on: ubuntu-latest
+    needs: [bump-version, release]
+    if: needs.bump-version.outputs.skipped != 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # required for cosign keyless signing
+    outputs:
+      digest: ${{ steps.bake.outputs.metadata }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump-version.outputs.tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/donaldgifford/renovate-operator
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.bump-version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.bump-version.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push Docker images
+        id: bake
+        uses: docker/bake-action@v6
+        with:
+          targets: release
+          source: .
+          files: |
+            docker-bake.hcl
+            ${{ steps.meta.outputs.bake-file-tags }}
+            ${{ steps.meta.outputs.bake-file-labels }}
+          set: |-
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+            *.output=type=registry
+
+      - name: Sign image with cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          for tag in $(echo '${{ steps.meta.outputs.tags }}' | tr '\n' ' '); do
+            cosign sign --yes "$tag"
+          done
+
+  helm-chart:
+    name: Helm OCI push
+    runs-on: ubuntu-latest
+    needs: [bump-version, docker]
+    if: needs.bump-version.outputs.skipped != 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump-version.outputs.tag }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Log in to GHCR (OCI)
+        run: |
+          echo '${{ secrets.GITHUB_TOKEN }}' | \
+            helm registry login ghcr.io \
+              --username '${{ github.actor }}' \
+              --password-stdin
+
+      - name: Stamp chart version + appVersion to release tag
+        run: |
+          tag='${{ needs.bump-version.outputs.tag }}'
+          # Strip leading v if present.
+          version="${tag#v}"
+          sed -i "s/^version: .*/version: ${version}/" dist/chart/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${version}\"/" dist/chart/Chart.yaml
+
+      - name: Helm lint
+        run: helm lint dist/chart --set defaultScan.enabled=false
+
+      - name: Helm package
+        run: helm package dist/chart --destination dist/chart-package
+
+      - name: Helm push
+        # Push to ghcr.io/donaldgifford/charts so the resulting OCI ref is
+        # ghcr.io/donaldgifford/charts/renovate-operator:<version>, matching
+        # the install path in IMPL-0001 Phase 9 acceptance.
+        run: |
+          helm push dist/chart-package/renovate-operator-*.tgz \
+            oci://ghcr.io/donaldgifford/charts

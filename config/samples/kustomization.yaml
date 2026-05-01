@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- renovate_v1alpha1_renovateplatform.yaml
+- renovate_v1alpha1_renovatescan.yaml
+- renovate_v1alpha1_renovaterun.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

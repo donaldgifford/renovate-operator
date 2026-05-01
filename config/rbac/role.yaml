@@ -1,0 +1,63 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - renovate.fartlab.dev
+  resources:
+  - renovateplatforms
+  - renovateruns
+  - renovatescans
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - renovate.fartlab.dev
+  resources:
+  - renovateplatforms/finalizers
+  - renovateruns/finalizers
+  - renovatescans/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - renovate.fartlab.dev
+  resources:
+  - renovateplatforms/status
+  - renovateruns/status
+  - renovatescans/status
+  verbs:
+  - get
+  - patch
+  - update

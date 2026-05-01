@@ -1,0 +1,37 @@
+---
+# Nightly scan of donaldgifford/* GitHub repos that opt in via renovate.json.
+# requireConfig: true means the operator skips repos without a Renovate config
+# rather than opening onboarding PRs. Lives in the renovate namespace; the
+# Helm chart's defaultScan template emits a similar resource.
+apiVersion: renovate.fartlab.dev/v1alpha1
+kind: RenovateScan
+metadata:
+  labels:
+    app.kubernetes.io/name: renovate-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: nightly
+  namespace: renovate
+spec:
+  platformRef:
+    name: github
+  schedule: "0 2 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  workers:
+    minWorkers: 1
+    maxWorkers: 5
+    reposPerWorker: 50
+    backoffLimitPerIndex: 2
+  discovery:
+    autodiscover: true
+    requireConfig: true
+    filter:
+      - donaldgifford/*
+    skipForks: true
+    skipArchived: true
+  renovateConfigOverrides:
+    labels:
+      - dependencies
+    automerge: false
+  successfulRunsHistoryLimit: 3
+  failedRunsHistoryLimit: 1

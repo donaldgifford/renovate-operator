@@ -1,0 +1,49 @@
+# PrometheusRule shipping the operator's recording rules. Mirrors the
+# rules embedded in dist/chart/templates/extra/prometheusrule.yaml so
+# users not running the chart can drop these straight into their
+# Prometheus Operator install.
+#
+# Apply with:
+#   kubectl apply -n monitoring -f contrib/prometheus/recording-rules.yaml
+#
+# The label `release: kube-prometheus-stack` makes kube-prometheus-stack
+# Prometheus pick this PrometheusRule up automatically. Adjust to match
+# your stack's selector if different.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: renovate-operator-recording
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: renovate-operator
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: renovate-operator.rules
+      interval: 30s
+      rules:
+        - record: renovate_operator:runs:rate5m
+          expr: sum(rate(renovate_operator_runs_total[5m])) by (scan, platform, result)
+
+        - record: renovate_operator:runs:failure_ratio5m
+          expr: |
+            sum(rate(renovate_operator_runs_total{result="failed"}[5m])) by (scan, platform)
+              /
+            clamp_min(sum(rate(renovate_operator_runs_total[5m])) by (scan, platform), 1)
+
+        - record: renovate_operator:run_duration:p95_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(renovate_operator_run_duration_seconds_bucket[5m])) by (le, scan, platform))
+
+        - record: renovate_operator:discovery_duration:p95_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(renovate_operator_discovery_duration_seconds_bucket[5m])) by (le, scan, platform))
+
+        - record: renovate_operator:active_runs:by_platform
+          expr: sum(renovate_operator_active_runs) by (platform)
+
+        - record: renovate_operator:shards:by_scan
+          expr: sum(renovate_run_shard_count) by (scan, platform)

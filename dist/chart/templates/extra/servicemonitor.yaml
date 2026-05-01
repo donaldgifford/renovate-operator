@@ -1,0 +1,43 @@
+{{/*
+ServiceMonitor for the operator's Prometheus metrics endpoint.
+
+Gated by .Values.metrics.serviceMonitor.enabled. Default additionalLabels
+target the kube-prometheus-stack Operator's `release: kube-prometheus-stack`
+selector per Resolved Q8 in IMPL-0001. Override additionalLabels for
+non-kube-prometheus-stack installations.
+
+Supersedes the kubebuilder-scaffolded prometheus/monitor.yaml; the legacy
+template stays disabled (prometheus.enable=false) to avoid double-render.
+*/}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "chart.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    control-plane: controller-manager
+    {{- with .Values.metrics.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: https
+      path: /metrics
+      scheme: https
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        # The operator currently runs with controller-runtime self-signed
+        # metrics certs (see ADR-0006 / IMPL-0001 Q6). Webhook-bearing
+        # releases will switch this to cert-manager-managed certs.
+        insecureSkipVerify: true
+{{- end }}

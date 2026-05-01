@@ -1,0 +1,45 @@
+---
+# RenovatePlatform/github — GitHub App credentials wired to the homelab
+# Renovate App. The Secret named below must exist in the operator's release
+# namespace (1Password Connect / ESO produces it). Cluster-scoped resource.
+apiVersion: renovate.fartlab.dev/v1alpha1
+kind: RenovatePlatform
+metadata:
+  labels:
+    app.kubernetes.io/name: renovate-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: github
+spec:
+  platformType: github
+  baseURL: https://api.github.com
+  auth:
+    githubApp:
+      appID: 123456
+      installationID: 67890123
+      privateKeyRef:
+        name: renovate-github-app
+        key: private-key.pem
+  presetRepoRef: github>donaldgifford/renovate-config
+  renovateImage: ghcr.io/renovatebot/renovate:latest
+  runnerConfig:
+    binarySource: install
+    onboarding: false
+    requireConfig: required
+---
+# RenovatePlatform/forgejo — token auth for the homelab Forgejo instance.
+apiVersion: renovate.fartlab.dev/v1alpha1
+kind: RenovatePlatform
+metadata:
+  labels:
+    app.kubernetes.io/name: renovate-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejo
+spec:
+  platformType: forgejo
+  baseURL: https://forgejo.fartlab.dev
+  auth:
+    token:
+      secretRef:
+        name: renovate-forgejo-token
+        key: token
+  renovateImage: ghcr.io/renovatebot/renovate:latest

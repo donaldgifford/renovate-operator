@@ -1,0 +1,51 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.Version }} (operator
+image {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}).
+
+The operator is reconciling the following CRDs in api group renovate.fartlab.dev/v1alpha1:
+  - RenovatePlatform   (cluster-scoped) — credentials + endpoint per Git host
+  - RenovateScan       (namespaced)     — cron schedule + worker fleet sizing
+  - RenovateRun        (namespaced)     — single fire-and-forget execution
+
+{{- if .Values.defaultScan.enabled }}
+
+A default RenovateScan named "{{ .Values.defaultScan.name }}" was shipped with
+the chart in namespace "{{ default .Release.Namespace .Values.defaultScan.namespace }}".
+It refers to RenovatePlatform "{{ .Values.defaultScan.platformRef.name }}" — make
+sure that Platform exists and has a Ready condition before the scan fires
+({{ .Values.defaultScan.schedule }} {{ .Values.defaultScan.timeZone }}).
+{{- end }}
+
+To check status:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "chart.name" . }}
+  kubectl -n {{ .Release.Namespace }} get rscan,rrun
+
+Observability:
+{{- if .Values.metrics.enabled }}
+  - Metrics: enabled on the operator pod (port {{ .Values.metrics.port }})
+{{- else }}
+  - Metrics: disabled (set metrics.enabled=true)
+{{- end }}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+  - ServiceMonitor: kube-prometheus-stack will scrape the operator
+{{- else }}
+  - ServiceMonitor: disabled (set metrics.serviceMonitor.enabled=true)
+{{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+  - PrometheusRule: alerts + recording rules shipped
+{{- else }}
+  - PrometheusRule: disabled (set metrics.prometheusRule.enabled=true)
+{{- end }}
+{{- if .Values.tracing.enabled }}
+  - Tracing: OTLP gRPC -> {{ .Values.tracing.otlpEndpoint | default "(otlpEndpoint missing!)" }}
+{{- else }}
+  - Tracing: disabled (set tracing.enabled=true and tracing.otlpEndpoint to enable)
+{{- end }}
+{{- if .Values.pprof.enabled }}
+  - pprof: enabled on :{{ .Values.pprof.port }} (in-cluster only)
+{{- end }}
+
+cert-manager is NOT bundled by this chart. v0.1.0 ships no webhooks; when
+webhook-bearing releases land, cert-manager will become a documented
+deployment prerequisite (see ADR-0006).
+
+Full docs: https://github.com/donaldgifford/renovate-operator

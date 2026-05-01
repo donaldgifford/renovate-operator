@@ -1,0 +1,82 @@
+# PrometheusRule shipping the operator's alerts. Mirrors the alerts
+# embedded in dist/chart/templates/extra/prometheusrule.yaml so users
+# not running the chart can drop these straight into their Prometheus
+# Operator install. Recording rules in recording-rules.yaml are
+# referenced; apply both files together.
+#
+# Apply with:
+#   kubectl apply -n monitoring -f contrib/prometheus/alerts.yaml
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: renovate-operator-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: renovate-operator
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: renovate-operator.alerts
+      rules:
+        - alert: RenovateOperatorRunsFailing
+          expr: renovate_operator:runs:failure_ratio5m > 0.5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ">50% of renovate runs failing for {{ $labels.scan }} on {{ $labels.platform }}"
+            description: |
+              Failure ratio over the last 5m is {{ $value | humanizePercentage }}.
+              Inspect RenovateRun list and operator logs.
+            runbook_url: https://github.com/donaldgifford/renovate-operator/blob/main/docs/runbooks/runs-failing.md
+
+        - alert: RenovateOperatorDiscoveryErrors
+          expr: sum(rate(renovate_operator_discovery_errors_total[5m])) by (scan, platform) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Repository discovery errors for {{ $labels.scan }} on {{ $labels.platform }}"
+            description: |
+              Sustained discovery errors typically indicate auth/credential issues
+              or upstream platform outages. Check RenovatePlatform Ready condition
+              and the operator's CredentialsResolved reason.
+
+        - alert: RenovateOperatorWorkerShardsFailing
+          expr: sum(rate(renovate_operator_shards_failed_total[15m])) by (scan, platform) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Renovate worker shards failing for {{ $labels.scan }}"
+            description: |
+              Indexed Job shards are exiting non-zero past their backoffLimitPerIndex.
+              Inspect the worker Job and shard ConfigMap for repo-level errors.
+
+        - alert: RenovateOperatorRunStuck
+          expr: |
+            renovate_operator_active_runs > 0
+              and on() (time() - max(renovate_operator_run_duration_seconds_sum) > 7200)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "RenovateRun appears stuck (>2h elapsed)"
+            description: |
+              At least one RenovateRun has been active for more than 2 hours.
+              Check the Run phase and worker Job pods for hang/backoff.
+
+        - alert: RenovateOperatorPodNotReady
+          expr: |
+            kube_deployment_status_replicas_ready{deployment="renovate-operator-controller-manager"}
+              <
+            kube_deployment_spec_replicas{deployment="renovate-operator-controller-manager"}
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Renovate operator deployment has unready replicas"
+            description: |
+              The renovate-operator deployment is not at full readiness.
+              Inspect pod state, leader election, and the operator container logs.

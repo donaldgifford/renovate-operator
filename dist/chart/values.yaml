@@ -1,0 +1,162 @@
+# Top-level surface per DESIGN-0001 § values.yaml. Overrides for the
+# kubebuilder-scaffolded controllerManager block live below for backward
+# compatibility — the manager.yaml template still reads from those keys.
+
+# image controls the operator container. Empty tag falls back to .Chart.AppVersion.
+image:
+  repository: ghcr.io/donaldgifford/renovate-operator
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+leaderElect: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# [METRICS]
+metrics:
+  enabled: true
+  port: 8080
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    additionalLabels:
+      release: kube-prometheus-stack
+  prometheusRule:
+    enabled: false
+    additionalLabels:
+      release: kube-prometheus-stack
+
+# [TRACING] OTLP exporter wires up only when otlpEndpoint is non-empty.
+tracing:
+  enabled: false
+  otlpEndpoint: ""
+  serviceName: renovate-operator
+  resourceAttributes: {}
+
+# [PPROF] Off by default. Set enabled=true to expose debug endpoints.
+pprof:
+  enabled: false
+  port: 8082
+
+logging:
+  level: info
+  format: json
+
+# [DEFAULT SCAN] See ADR-0008. When enabled=true a RenovateScan named
+# defaultScan.name is shipped by the chart in defaultScan.namespace
+# (release namespace by default). platformRef.name MUST be set.
+defaultScan:
+  enabled: true
+  name: default
+  namespace: ""
+  platformRef:
+    name: ""
+
+  schedule: "0 4 * * 0"
+  timeZone: UTC
+  suspend: false
+  concurrencyPolicy: Forbid
+
+  workers:
+    minWorkers: 1
+    maxWorkers: 10
+    reposPerWorker: 50
+    backoffLimitPerIndex: 2
+
+  discovery:
+    autodiscover: true
+    requireConfig: true
+    filter: []
+    topics: []
+    skipForks: true
+    skipArchived: true
+
+  successfulRunsHistoryLimit: 3
+  failedRunsHistoryLimit: 1
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+  extraEnv: []
+
+# [MANAGER]: Manager Deployment Configurations (kubebuilder-scaffolded; the
+# manager.yaml template reads these keys). The image, replicas, and resources
+# fields above shadow controllerManager equivalents at render time.
+controllerManager:
+  replicas: 1
+  container:
+    image:
+      repository: ghcr.io/donaldgifford/renovate-operator
+      tag: latest
+    imagePullPolicy: IfNotPresent
+    args:
+      - "--leader-elect"
+      - "--metrics-bind-address=:8443"
+      - "--health-probe-bind-address=:8081"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    livenessProbe:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      httpGet:
+        path: /healthz
+        port: 8081
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      httpGet:
+        path: /readyz
+        port: 8081
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  terminationGracePeriodSeconds: 10
+  serviceAccountName: renovate-operator-controller-manager
+
+# [RBAC]
+rbac:
+  enable: true
+
+# [CRDs]
+crd:
+  enable: true
+  keep: true
+
+# [PROMETHEUS] Legacy kubebuilder ServiceMonitor; superseded by
+# metrics.serviceMonitor above. Disabled by default to avoid double-render.
+prometheus:
+  enable: false
+
+# [NETWORK POLICIES]
+networkPolicy:
+  enable: false
+
+# cert-manager is a deployment prerequisite for any future webhook-bearing
+# release; v0.1.0 ships no webhooks so the scaffolded certmanager template
+# was removed (see ADR-0006 / IMPL-0001 Q6). When the helm/v1-alpha plugin
+# regenerates the chart it will re-emit dist/chart/templates/certmanager/
+# — run `make chart-clean` after `kubebuilder edit --plugins=helm/v1-alpha`
+# to re-strip it.
