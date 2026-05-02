@@ -13,6 +13,7 @@ Design docs, plans, and implementation docs can reference investigations by ID
 
 | ID | Title | Status | Date | Author | Link |
 |----|-------|--------|------|--------|------|
+| INV-0001 | Render RenovateScan Next Run printer column accurately for future timestamps | Open | 2026-05-02 | Donald Gifford | [0001-render-renovatescan-next-run-printer-column-accurately-for.md](0001-render-renovatescan-next-run-printer-column-accurately-for.md) |
 <!-- END DOCZ AUTO-GENERATED -->
 <!-- BEGIN DOCZ AUTO-GENERATED -->
 <!-- END DOCZ AUTO-GENERATED -->
