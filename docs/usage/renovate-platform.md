@@ -44,7 +44,9 @@ metadata:
   name: github
 spec:
   platformType: github
-  baseURL: https://api.github.com # optional; defaults to api.github.com
+  # baseURL: omitted for GitHub.com — only set for GitHub Enterprise Server
+  # (e.g., https://github.example.com). Setting it to https://api.github.com
+  # explicitly is unnecessary and was a footgun before the INV-0004 fix.
   auth:
     githubApp:
       appID: 123456

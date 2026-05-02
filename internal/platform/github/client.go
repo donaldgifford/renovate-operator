@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
@@ -123,7 +124,7 @@ func NewWithApp(auth AppAuth, opts ...ClientOption) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("github: install transport: %w", err)
 	}
-	if c.baseURL != "" {
+	if c.baseURL != "" && !isPublicGitHub(c.baseURL) {
 		itr.BaseURL = c.baseURL
 	}
 
@@ -190,7 +191,7 @@ func (c *Client) MintAccessToken(ctx context.Context) (string, time.Time, error)
 
 func buildGoGitHubClient(httpClient *http.Client, baseURL string) (*gogithub.Client, error) {
 	gh := gogithub.NewClient(httpClient)
-	if baseURL == "" {
+	if baseURL == "" || isPublicGitHub(baseURL) {
 		return gh, nil
 	}
 	out, err := gh.WithEnterpriseURLs(baseURL, baseURL)
@@ -198,6 +199,18 @@ func buildGoGitHubClient(httpClient *http.Client, baseURL string) (*gogithub.Cli
 		return nil, fmt.Errorf("github: GHES base URL: %w", err)
 	}
 	return out, nil
+}
+
+// isPublicGitHub reports whether baseURL points at api.github.com — in which
+// case go-github's WithEnterpriseURLs would prepend /api/v3/ to every path.
+// /api/v3/installation/repositories doesn't return what /installation/repositories
+// does on api.github.com, which silently fed empty results to App-auth Discover.
+func isPublicGitHub(baseURL string) bool {
+	switch strings.TrimRight(baseURL, "/") {
+	case "https://api.github.com", "http://api.github.com":
+		return true
+	}
+	return false
 }
 
 // tokenTransport injects "Authorization: Bearer <token>" on every request.

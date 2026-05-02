@@ -24,6 +24,7 @@ created: 2026-05-02
   - [Observation 2 — operator processed a disjoint set of 5 repos](#observation-2--operator-processed-a-disjoint-set-of-5-repos)
   - [Observation 3 — Discover falls back to /users/{owner}/repos](#observation-3--discover-falls-back-to-usersownerrepos)
   - [Observation 4 — public-vs-private split explains the disjoint set](#observation-4--public-vs-private-split-explains-the-disjoint-set)
+  - [Observation 5 — explicit `baseURL: https://api.github.com` doubles the bug surface](#observation-5--explicit-baseurl-httpsapigithubcom-doubles-the-bug-surface)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
 - [References](#references)
@@ -232,6 +233,38 @@ The fix is to route App-auth Clients through
 `/installation/repositories` (go-github `Apps.ListRepos`). PAT
 auth has no installation concept, so it keeps the existing org →
 user fallback.
+
+### Observation 5 — explicit `baseURL: https://api.github.com` doubles the bug surface
+
+After deploying the `Apps.ListRepos` switch on the homelab, the next Run
+still failed with `DiscoveryFailed: no repositories matched discovery
+filter`. Direct curl with the operator's minted token returned the
+expected 4 grant'd repos. Operator code, however, returned 0.
+
+The user's `RenovatePlatform.spec.baseURL` was set to
+`https://api.github.com` — copy-pasted from the example in
+`docs/usage/renovate-platform.md`. This triggered
+`gh.WithEnterpriseURLs(baseURL, baseURL)` in
+`internal/platform/github/client.go:191`, which prepends `/api/v3/` to
+every request path. For the legacy org/user listings,
+`https://api.github.com/api/v3/users/{owner}/repos` *happens* to redirect
+or alias to the right place — the prior 5-repo Run worked. But
+`https://api.github.com/api/v3/installation/repositories` does not
+behave the same: api.github.com responds with a shape go-github happily
+parses but with empty `Repositories`. Discover's loop returned 0.
+
+Fix layered on top of Observation 1-4's recommendation: detect
+`api.github.com` in the constructor and skip both
+`itr.BaseURL = baseURL` (ghinstallation override) and
+`gh.WithEnterpriseURLs` (go-github GHE prefix). New helper
+`isPublicGitHub(baseURL)` returns true for `https://api.github.com` /
+`http://api.github.com` (with or without trailing slash). Test
+`TestDiscover_AppAuth_PublicGitHubBaseURLDoesNotUseEnterprisePrefix`
+asserts no request issued under that misconfiguration carries `/api/v3/`.
+
+The doc example in `renovate-platform.md` no longer suggests setting
+`baseURL: https://api.github.com` — that field is now reserved for
+actual GitHub Enterprise Server URLs.
 
 ## Recommendation
 

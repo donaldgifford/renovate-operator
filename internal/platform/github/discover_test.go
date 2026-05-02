@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -183,6 +184,96 @@ func TestDiscover_AppAuth_FiltersByOwner(t *testing.T) {
 			t.Errorf("got %q, expected only donaldgifford/* in result", r.Slug)
 		}
 	}
+}
+
+// TestDiscover_AppAuth_PublicGitHubBaseURLDoesNotUseEnterprisePrefix is the
+// regression for the second half of INV-0004: when an operator explicitly
+// sets `baseURL: https://api.github.com` on the RenovatePlatform (which our
+// docs even modeled), `gh.WithEnterpriseURLs` would prepend `/api/v3/` to
+// every request. /api/v3/installation/repositories doesn't return the same
+// shape as /installation/repositories on api.github.com, so App-auth Discover
+// silently returned 0 repos. The fix detects api.github.com and skips
+// WithEnterpriseURLs so go-github uses its default routing.
+//
+// We can't drive the real api.github.com from a test, so instead we verify
+// the *path* go-github sends. Construct a Client with the public-GitHub
+// BaseURL pointed at our httptest server (via WithBaseURL — bypasses the
+// public-detection check inside NewWithApp by feeding the option after) and
+// assert the server saw `/installation/repositories`, not the GHE-prefixed
+// variant.
+func TestDiscover_AppAuth_PublicGitHubBaseURLDoesNotUseEnterprisePrefix(t *testing.T) {
+	t.Parallel()
+
+	const instID int64 = 42
+	var seenPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPaths = append(seenPaths, r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == fmt.Sprintf("/app/installations/%d/access_tokens", instID):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"ghs_minted","expires_at":"2099-01-01T00:00:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
+			_, _ = w.Write([]byte(`{"total_count":1,"repositories":[{"id":1,"full_name":"donaldgifford/p","default_branch":"main","owner":{"login":"donaldgifford"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// Construct with baseURL = "https://api.github.com" (the misconfigured
+	// real-world shape), then override with the test server URL via
+	// WithBaseURL. The public-detection logic still fires on construction
+	// time and decides not to call WithEnterpriseURLs — that's what we're
+	// asserting indirectly: requests must NOT be prefixed with /api/v3/.
+	c, err := ghclient.NewWithApp(
+		ghclient.AppAuth{
+			AppID: 1, InstallationID: instID, PEM: generatePEM(t),
+			BaseURL: "https://api.github.com",
+		},
+		ghclient.WithRateLimit(rate.Inf, 1),
+		ghclient.WithHTTPClient(&http.Client{Transport: redirectTransport(srv.URL)}),
+	)
+	if err != nil {
+		t.Fatalf("NewWithApp: %v", err)
+	}
+
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 || got[0].Slug != "donaldgifford/p" {
+		t.Errorf("Discover = %+v, want [donaldgifford/p]", got)
+	}
+
+	// The smoking-gun assertion: no path the operator sent had the GHE
+	// /api/v3/ prefix. If WithEnterpriseURLs leaked through, every path
+	// after the token mint would have been /api/v3/installation/...
+	for _, p := range seenPaths {
+		if strings.HasPrefix(p, "/api/v3/") {
+			t.Errorf("request hit %q — go-github applied /api/v3/ prefix even though baseURL is api.github.com", p)
+		}
+	}
+}
+
+// redirectTransport rewrites the host on every outbound request to the test
+// server's host. Lets the Client think it's talking to api.github.com while
+// actually hitting an httptest.Server.
+type redirectTransport string
+
+func (t redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	target, err := newURL(string(t))
+	if err != nil {
+		return nil, err
+	}
+	req2 := req.Clone(req.Context())
+	req2.URL.Scheme = target.Scheme
+	req2.URL.Host = target.Host
+	req2.Host = target.Host
+	return http.DefaultTransport.RoundTrip(req2)
+}
+
+func newURL(s string) (*url.URL, error) {
+	return url.Parse(s)
 }
 
 // TestDiscover_AppAuth_PaginatesInstallationRepos exercises the pagination
