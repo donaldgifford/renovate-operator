@@ -82,8 +82,13 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	}
 	out = append(out, authEnvs...)
 
-	// 3. Discovery
-	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: "false"})
+	// 3. Discovery — RENOVATE_AUTODISCOVER bifurcates by auth type. App auth
+	//    requires autodiscover=true so Renovate walks /app/installations and
+	//    mints tokens itself; the entrypoint shell narrows to this shard's
+	//    repos via RENOVATE_AUTODISCOVER_FILTER. Token auth uses
+	//    RENOVATE_REPOSITORIES (also set by entrypoint) and stays
+	//    autodiscover=false. See INV-0003.
+	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: autodiscoverValue(platform)})
 	if scan.Discovery.RequireConfig {
 		out = append(out, corev1.EnvVar{Name: envRenovateRequireCfg, Value: "required"})
 	}
@@ -119,6 +124,17 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	out = append(out, scan.ExtraEnv...)
 
 	return out, nil
+}
+
+// autodiscoverValue returns "true" for GitHubApp auth (Renovate's only
+// supported entry into App-installation token minting) and "false" for token
+// auth (where the operator hands Renovate a fixed RENOVATE_REPOSITORIES list
+// directly). See INV-0003.
+func autodiscoverValue(platform v1alpha1.RenovatePlatformSpec) string {
+	if platform.Auth.GitHubApp != nil {
+		return "true"
+	}
+	return "false"
 }
 
 func buildAuthEnv(platform v1alpha1.RenovatePlatformSpec, cred CredentialMount) ([]corev1.EnvVar, error) {

@@ -301,6 +301,59 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 	}
 }
 
+// TestBuildWorkerJob_GitHubAppSetsAutodiscoverTrue covers INV-0003: under
+// GitHub App auth, RENOVATE_AUTODISCOVER must be "true" so Renovate's App-
+// installation token-minting code path activates. autodiscover=false was the
+// hardcoded default that caused Phase 9 worker pods to die at platform init.
+func TestBuildWorkerJob_GitHubAppSetsAutodiscoverTrue(t *testing.T) {
+	t.Parallel()
+	job, _ := happyPathJob(t) // happyPathJob uses ghPlatform() = GitHubApp auth
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if got := envValue(env, "RENOVATE_AUTODISCOVER"); got != "true" {
+		t.Errorf("RENOVATE_AUTODISCOVER = %q under GitHubApp auth, want \"true\" (INV-0003)", got)
+	}
+}
+
+// TestBuildWorkerJob_TokenAuthKeepsAutodiscoverFalse asserts the bifurcation
+// stays put for token auth — Renovate handles Forgejo-token / GitHub-PAT init
+// directly and the operator owns the repo list via RENOVATE_REPOSITORIES.
+func TestBuildWorkerJob_TokenAuthKeepsAutodiscoverFalse(t *testing.T) {
+	t.Parallel()
+	run := ghRun()
+	run.Spec.PlatformSnapshot = forgejoPlatform()
+	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
+		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1,
+		Credential: jobspec.CredentialMount{SecretName: "creds", TokenKey: "token"},
+	})
+	if err != nil {
+		t.Fatalf("BuildWorkerJob err = %v", err)
+	}
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if got := envValue(env, "RENOVATE_AUTODISCOVER"); got != "false" {
+		t.Errorf("RENOVATE_AUTODISCOVER = %q under token auth, want \"false\"", got)
+	}
+}
+
+// TestEntrypointShell_BranchesOnGitHubAppEnv asserts the worker entrypoint
+// shell exports RENOVATE_AUTODISCOVER_FILTER under App auth and
+// RENOVATE_REPOSITORIES under token auth — the runtime-side half of the
+// INV-0003 bifurcation.
+func TestEntrypointShell_BranchesOnGitHubAppEnv(t *testing.T) {
+	t.Parallel()
+	shell := jobspec.EntrypointShell
+	for _, want := range []string{
+		`RENOVATE_GITHUB_APP_ID`,
+		`RENOVATE_AUTODISCOVER_FILTER="$REPOS_JSON"`,
+		`export RENOVATE_AUTODISCOVER_FILTER`,
+		`RENOVATE_REPOSITORIES="$REPOS_JSON"`,
+		`export RENOVATE_REPOSITORIES`,
+	} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("EntrypointShell missing %q", want)
+		}
+	}
+}
+
 func TestBuildWorkerJob_ExtraEnvAppendedLast(t *testing.T) {
 	t.Parallel()
 

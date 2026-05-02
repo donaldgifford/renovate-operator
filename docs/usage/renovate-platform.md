@@ -31,6 +31,15 @@ Mints installation tokens via `bradleyfalzon/ghinstallation/v2`. Renovate itself
 does the per-call JWT minting; the operator only mints tokens for its own
 discovery API calls.
 
+Under the hood the worker pod runs Renovate with
+`RENOVATE_AUTODISCOVER=true` plus `RENOVATE_AUTODISCOVER_FILTER=<this shard's
+repo slugs>` — that's the code path Renovate v43+ uses to walk
+`/app/installations` and mint installation tokens. The operator's
+discovery + sharding still owns the *which-repos* decision; the
+filter just narrows Renovate's autodiscover to exactly the slugs the
+operator picked. See [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)
+for the rationale.
+
 ```yaml
 apiVersion: renovate.fartlab.dev/v1alpha1
 kind: RenovatePlatform
