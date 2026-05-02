@@ -17,6 +17,7 @@ Design docs, plans, and implementation docs can reference investigations by ID
 | INV-0002 | RenovateScan never fires first Run when LastRunTime is unset | Open | 2026-05-02 | Donald Gifford | [0002-renovatescan-never-fires-first-run-when-lastruntime-is-unset.md](0002-renovatescan-never-fires-first-run-when-lastruntime-is-unset.md) |
 | INV-0003 | Renovate v43 GitHub App auth requires autodiscover, not RENOVATE_REPOSITORIES | Open | 2026-05-02 | Donald Gifford | [0003-renovate-v43-github-app-auth-requires-autodiscover-not.md](0003-renovate-v43-github-app-auth-requires-autodiscover-not.md) |
 | INV-0004 | GitHub Discover bypasses the App installation grant for personal accounts | Open | 2026-05-02 | Donald Gifford | [0004-github-discover-bypasses-app-installation-grant.md](0004-github-discover-bypasses-app-installation-grant.md) |
+| INV-0005 | Discovery bool fields silently default back to true on Run-snapshot copy | Open | 2026-05-02 | Donald Gifford | [0005-discovery-bool-fields-default-back-to-true-on-snapshot.md](0005-discovery-bool-fields-default-back-to-true-on-snapshot.md) |
 <!-- END DOCZ AUTO-GENERATED -->
 <!-- BEGIN DOCZ AUTO-GENERATED -->
 <!-- END DOCZ AUTO-GENERATED -->

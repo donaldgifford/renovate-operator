@@ -304,8 +304,8 @@ func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovate
 		Owner:        owner,
 		Patterns:     run.Spec.ScanSnapshot.Discovery.Filter,
 		Topics:       run.Spec.ScanSnapshot.Discovery.Topics,
-		SkipForks:    run.Spec.ScanSnapshot.Discovery.SkipForks,
-		SkipArchived: run.Spec.ScanSnapshot.Discovery.SkipArchived,
+		SkipForks:    run.Spec.ScanSnapshot.Discovery.SkipForksEnabled(),
+		SkipArchived: run.Spec.ScanSnapshot.Discovery.SkipArchivedEnabled(),
 	}
 	all, err := plat.Discover(ctx, filter)
 	if err != nil {
@@ -313,7 +313,7 @@ func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovate
 		return nil, err
 	}
 	span.SetAttributes(attribute.Int("repos.found", len(all)))
-	if !run.Spec.ScanSnapshot.Discovery.RequireConfig {
+	if !run.Spec.ScanSnapshot.Discovery.RequireConfigEnabled() {
 		return all, nil
 	}
 

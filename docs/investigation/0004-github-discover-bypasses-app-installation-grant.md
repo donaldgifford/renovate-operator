@@ -24,7 +24,7 @@ created: 2026-05-02
   - [Observation 2 — operator processed a disjoint set of 5 repos](#observation-2--operator-processed-a-disjoint-set-of-5-repos)
   - [Observation 3 — Discover falls back to /users/{owner}/repos](#observation-3--discover-falls-back-to-usersownerrepos)
   - [Observation 4 — public-vs-private split explains the disjoint set](#observation-4--public-vs-private-split-explains-the-disjoint-set)
-  - [Observation 5 — explicit `baseURL: https://api.github.com` doubles the bug surface](#observation-5--explicit-baseurl-httpsapigithubcom-doubles-the-bug-surface)
+  - [Observation 5 — explicit baseURL: https://api.github.com doubles the bug surface](#observation-5--explicit-baseurl-httpsapigithubcom-doubles-the-bug-surface)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
 - [References](#references)

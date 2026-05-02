@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	v1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 	"github.com/donaldgifford/renovate-operator/internal/jobspec"
@@ -64,10 +65,11 @@ func forgejoPlatform() v1alpha1.RenovatePlatformSpec {
 func nightlyScan() v1alpha1.RenovateScanSpec {
 	bli := int32(2)
 	return v1alpha1.RenovateScanSpec{
-		PlatformRef:             v1alpha1.LocalObjectReference{Name: "github"},
-		Schedule:                "0 2 * * *",
-		Workers:                 v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50, BackoffLimitPerIndex: &bli},
-		Discovery:               v1alpha1.DiscoverySpec{Autodiscover: true, RequireConfig: true},
+		PlatformRef: v1alpha1.LocalObjectReference{Name: "github"},
+		Schedule:    "0 2 * * *",
+		Workers:     v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50, BackoffLimitPerIndex: &bli},
+		//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+		Discovery:               v1alpha1.DiscoverySpec{Autodiscover: ptr.To(true), RequireConfig: ptr.To(true)},
 		RenovateConfigOverrides: &runtime.RawExtension{Raw: []byte(`{"labels":["dependencies"],"automerge":false}`)},
 	}
 }
@@ -495,6 +497,10 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 		PlatformRef: v1alpha1.LocalObjectReference{Name: "p"},
 		Schedule:    "* * * * *",
 		Workers:     v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 1, ReposPerWorker: 1},
+		// Explicit false survives now that the field is *bool — leaving it
+		// unset would apply the documented default (true). See INV-0005.
+		// new(bool) yields *bool→false, matching ptr.To(false) without the lint nag.
+		Discovery: v1alpha1.DiscoverySpec{RequireConfig: new(bool)},
 	}
 	platform := v1alpha1.RenovatePlatformSpec{
 		PlatformType:  v1alpha1.PlatformTypeGitHub,

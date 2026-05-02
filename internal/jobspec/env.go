@@ -86,7 +86,7 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	//    types. The operator-minted access token is what makes platform init
 	//    work — see INV-0003.
 	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: "false"})
-	if scan.Discovery.RequireConfig {
+	if scan.Discovery.RequireConfigEnabled() {
 		out = append(out, corev1.EnvVar{Name: envRenovateRequireCfg, Value: "required"})
 	}
 

@@ -130,16 +130,18 @@ type WorkersSpec struct {
 type DiscoverySpec struct {
 	// Autodiscover enables platform-side repo enumeration. When false the
 	// Scan's own renovateConfigOverrides must supply the repository list.
+	// Pointer so user-set false survives the JSON round-trip; nil applies
+	// the kubebuilder default. See INV-0005.
 	// +kubebuilder:default=true
 	// +optional
-	Autodiscover bool `json:"autodiscover,omitempty"`
+	Autodiscover *bool `json:"autodiscover,omitempty"`
 
 	// RequireConfig drops repos that lack a Renovate config in their default
 	// branch. STRONGLY recommended for org-wide scans to avoid mass
 	// onboarding-PR generation.
 	// +kubebuilder:default=true
 	// +optional
-	RequireConfig bool `json:"requireConfig,omitempty"`
+	RequireConfig *bool `json:"requireConfig,omitempty"`
 
 	// Filter is a list of Renovate-style autodiscover filters
 	// (e.g., "owner/*", "owner/prefix-*"). Empty means no filter — all repos
@@ -155,12 +157,38 @@ type DiscoverySpec struct {
 	// SkipForks drops forked repos from discovery.
 	// +kubebuilder:default=true
 	// +optional
-	SkipForks bool `json:"skipForks,omitempty"`
+	SkipForks *bool `json:"skipForks,omitempty"`
 
 	// SkipArchived drops archived repos from discovery.
 	// +kubebuilder:default=true
 	// +optional
-	SkipArchived bool `json:"skipArchived,omitempty"`
+	SkipArchived *bool `json:"skipArchived,omitempty"`
+}
+
+// AutodiscoverEnabled returns the effective Autodiscover value, applying
+// the documented default (true) when the field was unset.
+func (d DiscoverySpec) AutodiscoverEnabled() bool { return derefOrTrue(d.Autodiscover) }
+
+// RequireConfigEnabled returns the effective RequireConfig value, applying
+// the documented default (true) when the field was unset.
+func (d DiscoverySpec) RequireConfigEnabled() bool { return derefOrTrue(d.RequireConfig) }
+
+// SkipForksEnabled returns the effective SkipForks value, applying the
+// documented default (true) when the field was unset.
+func (d DiscoverySpec) SkipForksEnabled() bool { return derefOrTrue(d.SkipForks) }
+
+// SkipArchivedEnabled returns the effective SkipArchived value, applying
+// the documented default (true) when the field was unset.
+func (d DiscoverySpec) SkipArchivedEnabled() bool { return derefOrTrue(d.SkipArchived) }
+
+// derefOrTrue dereferences p, returning true when nil. All four discovery
+// bool defaults are true; if a future field needs a different default, swap
+// to a generic helper or pass the default explicitly.
+func derefOrTrue(p *bool) bool {
+	if p == nil {
+		return true
+	}
+	return *p
 }
 
 // RenovateScanStatus defines the observed state of RenovateScan.

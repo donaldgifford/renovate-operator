@@ -31,6 +31,7 @@ import (
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -125,8 +126,9 @@ func runFixture(name, ns, opNS string) (*renovatev1alpha1.RenovateRun, *corev1.S
 					ReposPerWorker: 50,
 				},
 				Discovery: renovatev1alpha1.DiscoverySpec{
-					Autodiscover:  true,
-					RequireConfig: false,
+					//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+					Autodiscover:  ptr.To(true),
+					RequireConfig: new(bool),
 				},
 			},
 		},
@@ -264,7 +266,8 @@ func TestRunReconcile_DiscoverTransientErrorRequeues(t *testing.T) {
 func TestRunReconcile_RequireConfigFiltersRepos(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("filter", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
 		hasConfig: true,
@@ -374,7 +377,8 @@ func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
 func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("skip", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
 		hasConfig: false,
@@ -401,7 +405,8 @@ func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 func TestRunReconcile_RequireConfigHasConfigErrorPropagates(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("config-err", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/a"}, {Slug: "team-ns/b"}},
 		configErr: platform.ErrTransient,
