@@ -2,7 +2,7 @@
 //
 // Targets:
 //   - default: local single-arch build (used by `docker buildx bake`)
-//   - ci:      multi-arch build for CI verification (no push)
+//   - ci:      linux/amd64 build + push of `:dev-ci` for PR validation
 //   - release: multi-arch build + push to GHCR (CI only, gated on tag)
 //
 // CI workflow consumes this via docker/bake-action@v6 with the `targets`
@@ -69,13 +69,14 @@ target "operator" {
   ]
 }
 
+// CI builds are linux/amd64 only — emulated arm64 builds via QEMU on
+// GitHub's ubuntu-latest runners take ~25 min and dominate PR feedback
+// time. Multi-arch coverage is restored in `operator-release`, which
+// runs only on tag pushes.
 target "operator-ci" {
-  inherits = ["_common"]
-  tags     = ["${REGISTRY}:${TAG}-ci"]
-  platforms = [
-    "linux/amd64",
-    "linux/arm64",
-  ]
+  inherits  = ["_common"]
+  tags      = ["${REGISTRY}:${TAG}-ci"]
+  platforms = ["linux/amd64"]
 }
 
 target "operator-release" {
