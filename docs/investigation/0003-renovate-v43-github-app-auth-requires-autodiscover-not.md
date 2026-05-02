@@ -16,6 +16,7 @@ created: 2026-05-02
 <!--toc:start-->
 - [Question](#question)
 - [Hypothesis](#hypothesis)
+  - [Hypothesis 2 (active)](#hypothesis-2-active)
 - [Context](#context)
 - [Approach](#approach)
 - [Environment](#environment)
