@@ -199,6 +199,39 @@ func TestBuildWorkerJob_GitHub_PodAndContainer(t *testing.T) {
 	}
 }
 
+// TestBuildWorkerJob_PodSecuritySatisfiesRestricted asserts the worker pod
+// template carries the four fields required by PodSecurity admission's
+// "restricted" profile. Without these, namespaces enforcing
+// `pod-security.kubernetes.io/enforce: restricted` reject the worker Job's
+// pod and the Run reconciler stalls on Discovering.
+func TestBuildWorkerJob_PodSecuritySatisfiesRestricted(t *testing.T) {
+	t.Parallel()
+	job, _ := happyPathJob(t)
+	pod := job.Spec.Template.Spec
+
+	if pod.SecurityContext == nil {
+		t.Fatal("Pod.SecurityContext must be set for PodSecurity restricted")
+	}
+	if pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Errorf("Pod.SecurityContext.RunAsNonRoot = %v, want true", pod.SecurityContext.RunAsNonRoot)
+	}
+	if pod.SecurityContext.SeccompProfile == nil ||
+		pod.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("Pod.SecurityContext.SeccompProfile = %+v, want type=RuntimeDefault", pod.SecurityContext.SeccompProfile)
+	}
+
+	if len(pod.Containers) != 1 || pod.Containers[0].SecurityContext == nil {
+		t.Fatal("container SecurityContext must be set for PodSecurity restricted")
+	}
+	csc := pod.Containers[0].SecurityContext
+	if csc.AllowPrivilegeEscalation == nil || *csc.AllowPrivilegeEscalation {
+		t.Errorf("Container.SecurityContext.AllowPrivilegeEscalation = %v, want false", csc.AllowPrivilegeEscalation)
+	}
+	if csc.Capabilities == nil || len(csc.Capabilities.Drop) != 1 || csc.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("Container.SecurityContext.Capabilities.Drop = %+v, want [ALL]", csc.Capabilities)
+	}
+}
+
 func TestBuildWorkerJob_GitHub_EnvOrdering(t *testing.T) {
 	t.Parallel()
 

@@ -136,6 +136,15 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					// Pod-level SecurityContext satisfies PodSecurity admission's
+					// "restricted" profile alongside the container-level fields below.
+					SecurityContext: &corev1.PodSecurityContext{
+						//nolint:modernize // new(bool) returns *false; we need *true.
+						RunAsNonRoot: ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Volumes: []corev1.Volume{
 						{
 							Name: shardVolumeName,
@@ -154,6 +163,12 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 							Env:     envs,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: shardVolumeName, MountPath: ShardMountPath, ReadOnly: true},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: new(bool),
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
 							},
 						},
 					},
