@@ -48,6 +48,14 @@ const requeueAfterMax = 5 * time.Minute
 // is not Ready.
 const requeueAfterPlatformPending = 60 * time.Second
 
+// firstFireGrace is how far before "now" a never-fired Scan walks its cron
+// schedule when looking for a missed boundary. Without it, a boundary that
+// lands a few milliseconds before "now" (the common case after the first
+// requeue) gets skipped because cron.Schedule.Next returns strictly after
+// its argument. One minute covers controller-runtime queue jitter and
+// requeue scheduling slop without firing boundaries minutes in the past.
+const firstFireGrace = 1 * time.Minute
+
 // cronParser parses standard 5-field cron expressions in the tz the Scan declares.
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
@@ -203,8 +211,11 @@ func computeFireTimes(schedule cron.Schedule, lastRun *metav1.Time, now time.Tim
 	if lastRun != nil {
 		startFrom = lastRun.In(loc)
 	} else {
-		// No prior run: only fire forward — never retroactively schedule.
-		startFrom = nowLoc
+		// No prior run: walk back one firstFireGrace window so a boundary
+		// at-or-just-before now is captured as a missed fire. Without the
+		// lookback, schedule.Next(now) jumps to the *next* boundary and
+		// the current one gets skipped forever — see INV-0002.
+		startFrom = nowLoc.Add(-firstFireGrace)
 	}
 
 	var missed time.Time

@@ -90,6 +90,54 @@ func TestComputeFireTimes_NoLastRun(t *testing.T) {
 	}
 }
 
+// TestComputeFireTimes_NoLastRunPastBoundary covers the INV-0002 bug: a Scan
+// reconciling just past a fire boundary with LastRunTime still nil must
+// capture that boundary as a missed fire instead of skipping it forever.
+func TestComputeFireTimes_NoLastRunPastBoundary(t *testing.T) {
+	t.Parallel()
+	loc, sched, err := parseSchedule("*/5 * * * *", "UTC")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// "now" is 06:30:00.05 UTC — 50 ms past the */5 boundary at 06:30:00.
+	// Without the firstFireGrace lookback, schedule.Next(now) would return
+	// 06:35 and missed would stay zero, dropping the 06:30 fire on the floor.
+	now := time.Date(2026, 4, 26, 6, 30, 0, 50_000_000, time.UTC)
+	missed, next := computeFireTimes(sched, nil, now, loc)
+
+	wantMissed := time.Date(2026, 4, 26, 6, 30, 0, 0, time.UTC)
+	if !missed.Equal(wantMissed) {
+		t.Errorf("missed = %v, want %v", missed, wantMissed)
+	}
+	wantNext := time.Date(2026, 4, 26, 6, 35, 0, 0, time.UTC)
+	if !next.Equal(wantNext) {
+		t.Errorf("next = %v, want %v", next, wantNext)
+	}
+}
+
+// TestComputeFireTimes_NoLastRunFarPastBoundary verifies that the
+// firstFireGrace lookback does not retroactively fire boundaries from far in
+// the past — e.g., a Scan created at 12:00 with a daily-at-00:00 schedule
+// must not fire today's 00:00 boundary 12 hours after the fact.
+func TestComputeFireTimes_NoLastRunFarPastBoundary(t *testing.T) {
+	t.Parallel()
+	loc, sched, err := parseSchedule("0 0 * * *", "UTC") // daily at 00:00 UTC
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	missed, next := computeFireTimes(sched, nil, now, loc)
+	if !missed.IsZero() {
+		t.Errorf("missed = %v, want zero (boundary outside firstFireGrace window)", missed)
+	}
+	wantNext := time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)
+	if !next.Equal(wantNext) {
+		t.Errorf("next = %v, want %v", next, wantNext)
+	}
+}
+
 func TestComputeFireTimes_LastRunWithMissed(t *testing.T) {
 	t.Parallel()
 	loc, sched, err := parseSchedule("0 4 * * *", "UTC")

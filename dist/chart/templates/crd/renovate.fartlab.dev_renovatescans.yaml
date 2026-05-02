@@ -34,7 +34,7 @@ spec:
       type: date
     - jsonPath: .status.nextRunTime
       name: Next Run
-      type: date
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string

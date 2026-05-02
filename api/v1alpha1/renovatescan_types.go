@@ -207,7 +207,7 @@ type RenovateScanStatus struct {
 // +kubebuilder:printcolumn:name="Platform",type="string",JSONPath=".spec.platformRef.name"
 // +kubebuilder:printcolumn:name="Schedule",type="string",JSONPath=".spec.schedule"
 // +kubebuilder:printcolumn:name="Last Run",type="date",JSONPath=".status.lastRunTime"
-// +kubebuilder:printcolumn:name="Next Run",type="date",JSONPath=".status.nextRunTime"
+// +kubebuilder:printcolumn:name="Next Run",type="string",JSONPath=".status.nextRunTime"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
