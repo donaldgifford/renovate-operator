@@ -279,6 +279,33 @@ Watch for rate-limit warnings (GitHub App: 4500 req/hr per installation;
 Forgejo: per-token configurable). If the discovery is filter-heavy and exhausts
 the budget, lower `discovery.filter` cardinality or reduce schedule frequency.
 
+### Worker pods rejected by PodSecurity admission
+
+Symptom: `RenovateRun` sits with no `Status.Phase` and no worker pod ever
+appears. Controller logs include lines like:
+
+```text
+would violate PodSecurity "restricted:latest": allowPrivilegeEscalation != false (...),
+unrestricted capabilities (...), runAsNonRoot != true (...), seccompProfile (...)
+```
+
+The Run's namespace has
+`pod-security.kubernetes.io/enforce=restricted` (or stricter) and the
+operator image is older than v0.1.2. v0.1.0 / v0.1.1 shipped a worker
+pod template missing the four PSA `restricted` fields; v0.1.2 added
+them ([SECURITY.md](../../SECURITY.md) → "Pod Security"). Upgrade:
+
+```bash
+helm upgrade -n renovate-system renovate-operator \
+  oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.1.2 \
+  -f values.yaml --reuse-values
+kubectl rollout restart deployment/renovate-operator-controller-manager -n renovate-system
+```
+
+If you're running the unreleased `dev-ci` image while iterating on a PR,
+make sure the deployment's `imagePullPolicy` is `Always` and rollout
+restart after each push.
+
 ### Worker `Job` `BackoffLimitExceeded`
 
 Renovate CLI itself errored on one or more shards.
