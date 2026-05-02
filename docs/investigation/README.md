@@ -14,6 +14,7 @@ Design docs, plans, and implementation docs can reference investigations by ID
 | ID | Title | Status | Date | Author | Link |
 |----|-------|--------|------|--------|------|
 | INV-0001 | Render RenovateScan Next Run printer column accurately for future timestamps | Open | 2026-05-02 | Donald Gifford | [0001-render-renovatescan-next-run-printer-column-accurately-for.md](0001-render-renovatescan-next-run-printer-column-accurately-for.md) |
+| INV-0002 | RenovateScan never fires first Run when LastRunTime is unset | Open | 2026-05-02 | Donald Gifford | [0002-renovatescan-never-fires-first-run-when-lastruntime-is-unset.md](0002-renovatescan-never-fires-first-run-when-lastruntime-is-unset.md) |
 <!-- END DOCZ AUTO-GENERATED -->
 <!-- BEGIN DOCZ AUTO-GENERATED -->
 <!-- END DOCZ AUTO-GENERATED -->
