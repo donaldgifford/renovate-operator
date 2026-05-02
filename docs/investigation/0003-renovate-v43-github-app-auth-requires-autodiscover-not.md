@@ -24,6 +24,7 @@ created: 2026-05-02
   - [Observation 2 — operator-side env wiring](#observation-2--operator-side-env-wiring)
   - [Observation 3 — Renovate's GitHub App auth model](#observation-3--renovates-github-app-auth-model)
   - [Observation 4 — autodiscoverFilter preserves sharding](#observation-4--autodiscoverfilter-preserves-sharding)
+  - [Observation 5 — hypothesis 1 fix deployed, error persists](#observation-5--hypothesis-1-fix-deployed-error-persists)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
 - [References](#references)
@@ -41,30 +42,63 @@ preserves the operator's sharding model while making Renovate happy?
 
 ## Hypothesis
 
-Renovate v43.x's platform initialization for `platform=github` checks
-for either `RENOVATE_TOKEN` (PAT) or **autodiscover-mode** App
-credentials. When `autodiscover=false` is paired with App credentials,
-Renovate has nowhere to mint installation tokens from at platform-init
-time (it doesn't yet know which installation owns each repo in
-`RENOVATE_REPOSITORIES`), and falls through to the
-"need-a-token" error.
+> **Hypothesis 1 (REFUTED — see [Findings](#findings) below).**
+>
+> Renovate v43.x's platform initialization for `platform=github` checks
+> for either `RENOVATE_TOKEN` (PAT) or **autodiscover-mode** App
+> credentials. When `autodiscover=false` is paired with App
+> credentials, Renovate has nowhere to mint installation tokens from
+> at platform-init time, and falls through to the "need-a-token"
+> error.
+>
+> The fix would be to bifurcate worker env wiring by auth type:
+>
+> - **GitHub App auth** → set `RENOVATE_AUTODISCOVER=true` plus
+>   `RENOVATE_AUTODISCOVER_FILTER=<shard's repo slugs as JSON array>`.
+> - **Token auth (PAT or Forgejo)** → keep the current
+>   `RENOVATE_REPOSITORIES + RENOVATE_AUTODISCOVER=false` path.
+>
+> This was implemented and deployed; the same `"You must configure a
+> GitHub token"` error reproduced 100% of the time. See
+> [Observation 5](#observation-5--hypothesis-1-fix-deployed-error-persists).
+> Renovate v43.x does not auto-mint installation tokens from
+> `RENOVATE_GITHUB_APP_ID/KEY` even with `autodiscover=true` — those
+> env vars are effectively dead code in self-hosted scheduler mode.
 
-The fix is to bifurcate worker env wiring by auth type:
+### Hypothesis 2 (active)
 
-- **GitHub App auth** → set `RENOVATE_AUTODISCOVER=true` plus
-  `RENOVATE_AUTODISCOVER_FILTER=<shard's repo slugs as JSON array>`.
-  Renovate enumerates installations, mints a token per installation
-  via `ghinstallation`-equivalent logic, and narrows to exactly the
-  repos the operator's sharding decided.
-- **Token auth (PAT or Forgejo)** → keep the current
-  `RENOVATE_REPOSITORIES + RENOVATE_AUTODISCOVER=false` path. Token
-  auth doesn't have the platform-init-needs-a-token problem.
+Renovate v43.x's `initPlatform` for `platform=github` requires a
+real, usable token *up front* — period. Auto-minting from App
+credentials at init time is not a feature of self-hosted Renovate
+v43.x; it's a Mend-hosted-only behavior (or it was removed in a v40+
+refactor we missed).
 
-The shard's repo list isn't known to the controller at env-build time
-(controller builds env once, all shards reuse it), so the
-`RENOVATE_AUTODISCOVER_FILTER` must be set at runtime from the
-entrypoint shell — same place we currently read `.repos` and export
-`RENOVATE_REPOSITORIES`.
+The actual fix is to **mint the installation token in the operator**
+(via `ghinstallation/v2`, already imported for discovery), pass it to
+the worker as `RENOVATE_TOKEN`. This matches the pattern used by the
+cluster-renovate operator at Mend and by every other K8s-native
+Renovate scheduler. Specifically:
+
+1. Extend `platform.Client` with a `MintAccessToken(ctx) (string, time.Time, error)`
+   method.
+2. GitHub impl: pull a fresh installation token from the
+   `ghinstallation.Transport` already constructed for discovery.
+3. Forgejo impl: return the static token from the Platform's
+   referenced Secret unchanged (PATs / Forgejo tokens don't expire,
+   so `expiresAt = time.Time{}`).
+4. In the Run reconciler, before mirroring the credential Secret,
+   call `MintAccessToken` and write the resulting token into the
+   mirrored Secret as key `access-token`.
+5. Worker pod env: always set `RENOVATE_TOKEN` from `access-token`,
+   drop `RENOVATE_GITHUB_APP_ID/KEY`, set `RENOVATE_AUTODISCOVER=false`.
+6. Entrypoint shell: collapse back to a single branch — always export
+   `RENOVATE_REPOSITORIES`, no auth-type bifurcation needed.
+
+**Token TTL caveat.** ghinstallation tokens are 1h. A Run that takes
+>1h would 401 mid-scan. v0.1.x mitigation: refuse Runs whose discovery
+returns more repos than fit in a 1h budget at the configured shard
+size; v0.2.x proper fix: token-refresh sidecar, shorter shards, or a
+credential-source abstraction (see [Recommendation](#recommendation)).
 
 ## Context
 
@@ -196,43 +230,111 @@ The operator's existing sharding logic still decides which repos go to
 which worker; Renovate just has a different plumbing primitive for
 hearing the same answer.
 
+### Observation 5 — hypothesis 1 fix deployed, error persists
+
+The autodiscover-bifurcation fix from hypothesis 1 was committed
+(`fix(jobspec): bifurcate worker env by auth type for Renovate v43 App auth`),
+pushed to PR #11, built into the `:dev-ci` image, and deployed onto
+the homelab cluster. Verified via the next worker pod:
+
+```text
+$ kubectl get pod -n renovate <pod> -o jsonpath='{.spec.containers[0].env}'
+[
+  ...
+  {"name":"RENOVATE_AUTODISCOVER","value":"true"},        # ← new value lands
+  ...
+]
+$ kubectl get pod -n renovate <pod> -o jsonpath='{.spec.containers[0].command}'
+[..., "...if [ -n \"${RENOVATE_GITHUB_APP_ID:-}\" ]; then RENOVATE_AUTODISCOVER_FILTER=...; else RENOVATE_REPOSITORIES=...; fi..."]
+                          # ← entrypoint shell bifurcation lands
+```
+
+Both halves of the fix are unambiguously live. The exact same
+`"You must configure a GitHub token"` error reproduces:
+
+```json
+{"renovateVersion":"43.160.5","msg":"Renovate started","time":"2026-05-02T13:58:30.987Z"}
+{"errorMessage":"You must configure a GitHub token","msg":"Initialization error","time":"2026-05-02T13:58:31.079Z"}
+```
+
+The error fires ~92 ms after `Renovate started` — well below the
+~250-500 ms a successful `/app/installations` call to api.github.com
+would take. So Renovate is bailing in **config validation**, not
+mid-API-call. Hypothesis 1 was wrong: `RENOVATE_AUTODISCOVER=true` does
+*not* unlock App-credential token minting at init time on v43.x.
+
+The `RENOVATE_GITHUB_APP_ID/KEY` env vars are effectively dead code
+in self-hosted scheduler mode for v43.x. They may be exclusively used
+by Mend's hosted Renovate or have been refactored out of self-hosted
+init at some point in the v40+ series.
+
 ## Conclusion
 
-**Answer:** Yes, confirmed. Renovate v43.x with `platform=github` +
-App credentials cannot init unless `autodiscover=true`. The fix is
-purely worker-env wiring; no operator-side token minting is needed
-because Renovate already has the App credentials and does its own
-installation-token minting along the autodiscover code path.
+**Answer:** Hypothesis 1 refuted (autodiscover alone insufficient).
+Hypothesis 2 active: Renovate v43.x's `initPlatform` requires a real
+token up front, no exceptions — the operator must mint its own
+installation token from the App credentials and pass it to the
+worker as `RENOVATE_TOKEN`.
 
-The bifurcation is auth-type-driven and small:
-
-- App auth → autodiscover=true + `autodiscoverFilter` from shard
-- Token auth → repositories from shard, autodiscover=false
+The fix is **operator-side token minting** via `ghinstallation/v2`
+(already imported for discovery). Renovate becomes a token consumer,
+not a token-minter; the operator owns the App→token translation.
 
 ## Recommendation
 
-1. **Patch `internal/jobspec/env.go`**: drive `RENOVATE_AUTODISCOVER`
-   off the platform's auth type — `"true"` for `Auth.GitHubApp`, `"false"` for
-   `Auth.Token`. Co-locate it with the auth env in `buildAuthEnv` so the
-   coupling is local and obvious.
-2. **Patch `internal/jobspec/entrypoint.go` (EntrypointShell)**: branch
-   on `RENOVATE_GITHUB_APP_ID` being set — if present, export
-   `RENOVATE_AUTODISCOVER_FILTER` from `.repos`; otherwise export
-   `RENOVATE_REPOSITORIES`.
-3. **Add tests**:
-   - `TestBuildAuthEnv_GitHubAppSetsAutodiscoverTrue`
-   - `TestBuildAuthEnv_TokenKeepsAutodiscoverFalse`
-   - `TestEntrypointShell_BranchesOnAppEnv` — assert the shell snippet
-     contains both branches and the right env-var names.
-4. **Update `docs/usage/renovate-platform.md`** with a note that the
-   App-auth path uses Renovate's autodiscover internally; the
-   operator's discovery + sharding still owns the *which-repos*
-   decision via `autodiscoverFilter`.
-5. **Verify on homelab**: push to `dev-ci`, restart deployment, watch
-   `kubectl get rrun -A` flip to `Succeeded` for the next */5
-   boundary.
-6. **Bundle with INV-0001 + INV-0002 + PodSecurity** as PR #11 →
-   v0.1.2.
+Implement Option B end-to-end:
+
+1. **Extend `platform.Client`** in `internal/platform/platform.go`
+   with `MintAccessToken(ctx) (token string, expiresAt time.Time, err error)`.
+2. **`internal/platform/github`**: persist the
+   `ghinstallation.Transport` constructed in `NewWithApp` on the
+   `Client` struct, expose it via the new method. Token-auth path
+   returns the static token + zero expiry.
+3. **`internal/platform/forgejo`**: store the static token on the
+   `Client` struct; new method returns it + zero expiry.
+4. **`internal/credentials`**: rebuild the mirror payload around a
+   single `access-token` key. Drop the App-PEM passthrough; the
+   worker no longer needs it.
+5. **`internal/controller/renovaterun_controller.go`** —
+   `mirrorCredential` now: build a platform Client → mint a token →
+   write `access-token` into the mirrored Secret. `ensureWorkerJob`
+   loses the auth-type switch; `cred.TokenKey = "access-token"` for
+   both auth types.
+6. **`internal/jobspec/env.go`**: drop `RENOVATE_GITHUB_APP_ID/KEY`
+   wiring entirely. Always set `RENOVATE_TOKEN` from
+   `cred.TokenKey`. `RENOVATE_AUTODISCOVER` reverts to hardcoded
+   `"false"`. Drop the `autodiscoverValue` helper introduced in the
+   refuted hypothesis 1 attempt.
+7. **`internal/jobspec/entrypoint.go`**: collapse to a single branch
+   — always export `RENOVATE_REPOSITORIES`. The auth-type bifurcation
+   in the shell is no longer needed.
+8. **`internal/jobspec.CredentialMount`**: drop the `PEMKey` field;
+   `TokenKey` is the only auth knob now.
+9. **Update + add tests** at every layer:
+   - `internal/platform/github`: `TestMintAccessToken_AppMintsViaTransport`,
+     `TestMintAccessToken_TokenReturnsStatic`.
+   - `internal/platform/forgejo`: `TestMintAccessToken_ReturnsStaticToken`.
+   - `internal/jobspec`: keep PSA-restricted test; replace App-env
+     tests with `TestBuildWorkerJob_AlwaysSetsRenovateToken`; remove
+     `TestEntrypointShell_BranchesOnGitHubAppEnv` and
+     `TestBuildWorkerJob_GitHubAppSetsAutodiscoverTrue`,
+     `TestBuildWorkerJob_TokenAuthKeepsAutodiscoverFalse`.
+   - `internal/controller`: extend the platform-factory mock to mint
+     a fake token; update `mirrorCredential` tests to assert the
+     mirrored Secret carries `access-token` only.
+10. **Token TTL guard for v0.1.x**: log a warning when discovery
+    returns enough repos that even single-shard execution would
+    likely exceed 50 minutes (rough proxy for the 1-hour token
+    expiry). No hard gate yet — flag for v0.2.x.
+11. **Document the credential-source abstraction as a deferred
+    enhancement.** Future `RenovatePlatform.spec.auth` could grow
+    `githubAppFromVault`, `githubAppFromESO`, `tokenFromAWSSM`, etc.
+    Operator's `MintAccessToken` becomes the single point for
+    plugging in alternate sources. Tracked in DESIGN-0001 follow-ups,
+    not in this PR.
+
+Bundle with INV-0001 / INV-0002 / PodSecurity / INV-0003-h1-revert
+as PR #11 → v0.1.2.
 
 ## References
 

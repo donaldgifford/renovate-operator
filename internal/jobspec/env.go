@@ -33,8 +33,6 @@ const (
 	envRenovateAutodiscover = "RENOVATE_AUTODISCOVER"
 	envRenovateRequireCfg   = "RENOVATE_REQUIRE_CONFIG"
 	envRenovateConfig       = "RENOVATE_CONFIG"
-	envRenovateGitHubAppID  = "RENOVATE_GITHUB_APP_ID"
-	envRenovateGitHubAppKey = "RENOVATE_GITHUB_APP_KEY"
 	envRenovateToken        = "RENOVATE_TOKEN" // #nosec G101 -- env var name, not a credential
 
 	envLogLevel  = "LOG_LEVEL"
@@ -82,13 +80,12 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	}
 	out = append(out, authEnvs...)
 
-	// 3. Discovery — RENOVATE_AUTODISCOVER bifurcates by auth type. App auth
-	//    requires autodiscover=true so Renovate walks /app/installations and
-	//    mints tokens itself; the entrypoint shell narrows to this shard's
-	//    repos via RENOVATE_AUTODISCOVER_FILTER. Token auth uses
-	//    RENOVATE_REPOSITORIES (also set by entrypoint) and stays
-	//    autodiscover=false. See INV-0003.
-	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: autodiscoverValue(platform)})
+	// 3. Discovery. The operator owns the repo list end-to-end and ships it
+	//    via RENOVATE_REPOSITORIES (set by the entrypoint shell from the
+	//    shard JSON), so RENOVATE_AUTODISCOVER stays "false" for both auth
+	//    types. The operator-minted access token is what makes platform init
+	//    work — see INV-0003.
+	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: "false"})
 	if scan.Discovery.RequireConfig {
 		out = append(out, corev1.EnvVar{Name: envRenovateRequireCfg, Value: "required"})
 	}
@@ -126,56 +123,29 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	return out, nil
 }
 
-// autodiscoverValue returns "true" for GitHubApp auth (Renovate's only
-// supported entry into App-installation token minting) and "false" for token
-// auth (where the operator hands Renovate a fixed RENOVATE_REPOSITORIES list
-// directly). See INV-0003.
-func autodiscoverValue(platform v1alpha1.RenovatePlatformSpec) string {
-	if platform.Auth.GitHubApp != nil {
-		return "true"
-	}
-	return "false"
-}
-
+// buildAuthEnv resolves the worker's credential env. Both auth modes converge
+// on RENOVATE_TOKEN sourced from the per-Run mirrored Secret's access-token
+// key — the operator mints an installation token for App auth and passes
+// through the static token for Token auth (see INV-0003). The platform
+// type only matters at controller side (Discovery + token mint).
 func buildAuthEnv(platform v1alpha1.RenovatePlatformSpec, cred CredentialMount) ([]corev1.EnvVar, error) {
-	switch {
-	case platform.Auth.GitHubApp != nil:
-		if cred.PEMKey == "" {
-			return nil, fmt.Errorf("jobspec: GitHubApp auth requires CredentialMount.PEMKey")
-		}
-		return []corev1.EnvVar{
-			{
-				Name:  envRenovateGitHubAppID,
-				Value: fmt.Sprintf("%d", platform.Auth.GitHubApp.AppID),
-			},
-			{
-				Name: envRenovateGitHubAppKey,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
-						Key:                  cred.PEMKey,
-					},
-				},
-			},
-		}, nil
-	case platform.Auth.Token != nil:
-		if cred.TokenKey == "" {
-			return nil, fmt.Errorf("jobspec: Token auth requires CredentialMount.TokenKey")
-		}
-		return []corev1.EnvVar{
-			{
-				Name: envRenovateToken,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
-						Key:                  cred.TokenKey,
-					},
-				},
-			},
-		}, nil
-	default:
+	if platform.Auth.GitHubApp == nil && platform.Auth.Token == nil {
 		return nil, fmt.Errorf("jobspec: PlatformAuth has neither githubApp nor token set")
 	}
+	if cred.TokenKey == "" {
+		return nil, fmt.Errorf("jobspec: CredentialMount.TokenKey is required")
+	}
+	return []corev1.EnvVar{
+		{
+			Name: envRenovateToken,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
+					Key:                  cred.TokenKey,
+				},
+			},
+		},
+	}, nil
 }
 
 // mergeRenovateConfig combines platform.runnerConfig and scan.renovateConfigOverrides

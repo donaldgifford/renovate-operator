@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	gogithub "github.com/google/go-github/v62/github"
@@ -87,6 +88,14 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	limiter    *rate.Limiter
+
+	// appTransport is set when the Client was constructed via NewWithApp.
+	// MintAccessToken pulls a fresh installation token from it.
+	appTransport *ghinstallation.Transport
+
+	// staticToken is set when the Client was constructed via NewWithToken
+	// (PAT auth). MintAccessToken returns it unchanged.
+	staticToken string
 }
 
 // NewWithApp constructs a Client backed by GitHub App installation auth.
@@ -123,6 +132,7 @@ func NewWithApp(auth AppAuth, opts ...ClientOption) (*Client, error) {
 		return nil, err
 	}
 	c.gh = gh
+	c.appTransport = itr
 	return c, nil
 }
 
@@ -152,7 +162,30 @@ func NewWithToken(auth TokenAuth, opts ...ClientOption) (*Client, error) {
 		return nil, err
 	}
 	c.gh = gh
+	c.staticToken = auth.Token
 	return c, nil
+}
+
+// MintAccessToken returns a token usable as RENOVATE_TOKEN. App-auth Clients
+// mint a fresh installation token via ghinstallation (TTL ~1h on github.com).
+// Token-auth Clients return the configured PAT unchanged with a zero
+// expiresAt — PATs don't expire on a fixed schedule. See INV-0003.
+func (c *Client) MintAccessToken(ctx context.Context) (string, time.Time, error) {
+	if c.appTransport != nil {
+		tok, err := c.appTransport.Token(ctx)
+		if err != nil {
+			return "", time.Time{}, fmt.Errorf("github: mint installation token: %w", err)
+		}
+		expiresAt, _, err := c.appTransport.Expiry()
+		if err != nil {
+			return "", time.Time{}, fmt.Errorf("github: install-token expiry: %w", err)
+		}
+		return tok, expiresAt, nil
+	}
+	if c.staticToken == "" {
+		return "", time.Time{}, fmt.Errorf("github: client has no auth credential")
+	}
+	return c.staticToken, time.Time{}, nil
 }
 
 func buildGoGitHubClient(httpClient *http.Client, baseURL string) (*gogithub.Client, error) {

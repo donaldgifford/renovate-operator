@@ -27,18 +27,15 @@ must be set. CEL validation on the CRD enforces this at admission time.
 
 ### GitHub App (`auth.githubApp`)
 
-Mints installation tokens via `bradleyfalzon/ghinstallation/v2`. Renovate itself
-does the per-call JWT minting; the operator only mints tokens for its own
-discovery API calls.
-
-Under the hood the worker pod runs Renovate with
-`RENOVATE_AUTODISCOVER=true` plus `RENOVATE_AUTODISCOVER_FILTER=<this shard's
-repo slugs>` — that's the code path Renovate v43+ uses to walk
-`/app/installations` and mint installation tokens. The operator's
-discovery + sharding still owns the *which-repos* decision; the
-filter just narrows Renovate's autodiscover to exactly the slugs the
-operator picked. See [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)
-for the rationale.
+The operator mints a short-lived (~1h) installation access token from the
+App's private key (via
+[`bradleyfalzon/ghinstallation/v2`](https://github.com/bradleyfalzon/ghinstallation))
+on every Run, writes the resulting token into a per-Run mirrored Secret
+in the Run's namespace, and the worker pod consumes it as
+`RENOVATE_TOKEN`. The App private key never leaves the operator's
+release namespace; the worker only ever sees the minted access token.
+See [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)
+for why we mint operator-side instead of letting Renovate do it.
 
 ```yaml
 apiVersion: renovate.fartlab.dev/v1alpha1

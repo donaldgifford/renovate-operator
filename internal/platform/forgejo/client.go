@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"code.gitea.io/sdk/gitea"
 	"golang.org/x/time/rate"
@@ -66,6 +67,10 @@ type Client struct {
 	gitea      *gitea.Client
 	httpClient *http.Client
 	limiter    *rate.Limiter
+
+	// staticToken is the configured Forgejo token. MintAccessToken returns
+	// it unchanged; Forgejo tokens don't expire on a fixed schedule.
+	staticToken string
 }
 
 // New constructs a Client.
@@ -93,7 +98,15 @@ func New(auth Auth, opts ...ClientOption) (*Client, error) {
 		return nil, fmt.Errorf("forgejo: gitea.NewClient: %w", err)
 	}
 	c.gitea = gc
+	c.staticToken = auth.Token
 	return c, nil
+}
+
+// MintAccessToken returns the static Forgejo token unchanged. Forgejo tokens
+// don't expire on a fixed schedule, so expiresAt is the zero time. See
+// INV-0003.
+func (c *Client) MintAccessToken(_ context.Context) (string, time.Time, error) {
+	return c.staticToken, time.Time{}, nil
 }
 
 func (c *Client) wait(ctx context.Context) error {

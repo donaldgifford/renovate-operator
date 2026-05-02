@@ -85,6 +85,17 @@ type Client interface {
 	// renovate.json, .renovaterc, .renovaterc.json, .github/renovate.json,
 	// .gitlab/renovate.json on its default branch.
 	HasRenovateConfig(ctx context.Context, repo Repository) (bool, error)
+
+	// MintAccessToken returns a token that can authenticate to the platform's
+	// git API. For GitHub App auth this is a freshly-minted installation
+	// token (~1h TTL on github.com); for token auth it's the static
+	// configured token returned unchanged with a zero expiresAt (PATs and
+	// Forgejo tokens don't expire on a fixed schedule).
+	//
+	// The Run reconciler calls this once per Run, writes the result into
+	// the per-Run mirrored Secret as `access-token`, and the worker pod
+	// consumes it as RENOVATE_TOKEN. See INV-0003.
+	MintAccessToken(ctx context.Context) (token string, expiresAt time.Time, err error)
 }
 
 // ConfigPaths is the ordered list of files HasRenovateConfig probes. First

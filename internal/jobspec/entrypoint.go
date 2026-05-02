@@ -19,8 +19,10 @@ package jobspec
 // EntrypointShell is the inline shell snippet locked by IMPL-0001 Q9. It runs
 // as the worker container's command, reads the per-shard JSON from the
 // mounted ConfigMap (decompressing the .json.gz path when needed), exports
-// either RENOVATE_REPOSITORIES (token auth) or RENOVATE_AUTODISCOVER_FILTER
-// (GitHub App auth — see INV-0003), and execs the real renovate binary.
+// RENOVATE_REPOSITORIES, and execs the real renovate binary. Auth is
+// supplied via RENOVATE_TOKEN, sourced from the per-Run mirrored Secret —
+// see INV-0003 for why the operator mints the token rather than passing
+// raw App credentials to Renovate.
 //
 // Kept short enough to inline cleanly into the Pod spec — no sidecar image,
 // no Go helper binary.
@@ -32,12 +34,8 @@ if   [ -f "$SHARD_FILE" ]; then DATA="$(cat "$SHARD_FILE")"
 elif [ -f "$GZ_FILE"    ]; then DATA="$(gunzip -c "$GZ_FILE")"
 else echo "shard $INDEX not present (looked at $SHARD_FILE and $GZ_FILE)" >&2; exit 1
 fi
-REPOS_JSON="$(printf '%s' "$DATA" | jq -c '.repos')"
-if [ -n "${RENOVATE_GITHUB_APP_ID:-}" ]; then
-  RENOVATE_AUTODISCOVER_FILTER="$REPOS_JSON"; export RENOVATE_AUTODISCOVER_FILTER
-else
-  RENOVATE_REPOSITORIES="$REPOS_JSON"; export RENOVATE_REPOSITORIES
-fi
+RENOVATE_REPOSITORIES="$(printf '%s' "$DATA" | jq -c '.repos')"
+export RENOVATE_REPOSITORIES
 exec renovate
 `
 

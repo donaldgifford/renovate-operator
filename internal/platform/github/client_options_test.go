@@ -45,6 +45,66 @@ func generatePEM(t *testing.T) []byte {
 	})
 }
 
+// TestMintAccessToken_TokenReturnsStatic covers the PAT path: MintAccessToken
+// returns the configured token unchanged with a zero expiresAt.
+func TestMintAccessToken_TokenReturnsStatic(t *testing.T) {
+	t.Parallel()
+	c, err := ghclient.NewWithToken(ghclient.TokenAuth{Token: "ghp_static-pat"})
+	if err != nil {
+		t.Fatalf("NewWithToken: %v", err)
+	}
+	tok, expiresAt, err := c.MintAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	if tok != "ghp_static-pat" {
+		t.Errorf("token = %q, want ghp_static-pat", tok)
+	}
+	if !expiresAt.IsZero() {
+		t.Errorf("expiresAt = %v, want zero (PATs don't expire on a fixed schedule)", expiresAt)
+	}
+}
+
+// TestMintAccessToken_AppMintsViaTransport covers the App-auth path:
+// MintAccessToken hits ghinstallation's /app/installations/{id}/access_tokens
+// endpoint via the configured BaseURL and returns whatever token the upstream
+// hands back. We mock the endpoint with httptest.
+func TestMintAccessToken_AppMintsViaTransport(t *testing.T) {
+	t.Parallel()
+	const wantToken = "ghs_minted-installation-token"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/app/installations/12345/access_tokens" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"` + wantToken + `","expires_at":"2099-01-01T00:00:00Z"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := ghclient.NewWithApp(
+		ghclient.AppAuth{
+			AppID: 1, InstallationID: 12345, PEM: generatePEM(t),
+			BaseURL: srv.URL + "/",
+		},
+		ghclient.WithRateLimit(rate.Inf, 1),
+	)
+	if err != nil {
+		t.Fatalf("NewWithApp: %v", err)
+	}
+
+	tok, expiresAt, err := c.MintAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	if tok != wantToken {
+		t.Errorf("token = %q, want %q", tok, wantToken)
+	}
+	if expiresAt.IsZero() {
+		t.Error("expiresAt is zero; want the upstream-supplied expiration")
+	}
+}
+
 func TestNewWithApp_OptionsApplied(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

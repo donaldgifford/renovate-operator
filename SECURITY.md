@@ -90,12 +90,20 @@ mount at Renovate's cache path); not on the v0.1.x roadmap.
   operator's `ClusterRole` only reads `Secret`s in its own namespace —
   it cannot enumerate or read Secrets in tenant namespaces.
 
-- **Per-Run credential mirror.** When a `RenovateRun` materializes, the
-  controller mirrors the credential `Secret` into the Run's namespace
-  with an owner reference back to the Run. The mirror is GC'd
-  automatically when the Run is deleted (TTL via Kubernetes' garbage
-  collector). This keeps the worker pod from needing cross-namespace
-  Secret read permissions.
+- **Operator-side token minting.** The operator mints a short-lived
+  (~1h) installation access token from the GitHub App's private key
+  via [`ghinstallation/v2`](https://github.com/bradleyfalzon/ghinstallation)
+  on every Run. The App private key never leaves the operator's
+  release namespace; the worker only ever sees the minted access
+  token. Forgejo's static PAT passes through unchanged (Forgejo doesn't
+  have an analogous mint flow). See [INV-0003](docs/investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)
+  for why this design replaced "let Renovate handle App auth itself".
+
+- **Per-Run credential mirror.** The Run controller writes the minted
+  access token into a `Secret` in the Run's namespace under the
+  `access-token` key, with an owner reference back to the Run. The
+  mirror carries *only* the access token — never the App PEM or the
+  upstream PAT. GC is automatic when the Run is deleted.
 
 - **No plaintext credentials in logs or status.** The operator
   redacts private-key references in `Status.Conditions` messages and
@@ -103,10 +111,16 @@ mount at Renovate's cache path); not on the v0.1.x roadmap.
   `reason=SecretNotFound` / `SecretInvalid` without echoing the
   contents.
 
-- **Renovate handles its own JWT minting.** The operator does not see or
-  cache Git platform tokens beyond the initial App-private-key /
-  token credential — Renovate inside the worker pod mints its own
-  installation tokens from the App private key per Run.
+- **Deferred enhancement: credential-source abstraction.** Today the
+  App private key and Forgejo PAT live in K8s `Secret`s (commonly
+  populated by ESO / 1Password Connect / etc.). A future
+  `RenovatePlatform.spec.auth.{githubAppFromVault, githubAppFromESO,
+  tokenFromAWSSM, ...}` would let the operator resolve credentials
+  from HashiCorp Vault, ESO, AWS Secrets Manager, GCP Secret Manager,
+  or 1Password Connect directly, without K8s `Secret` as the
+  intermediary. The token-minting code path stays the same;
+  the credential *source* becomes pluggable. Tracked as a v0.2+
+  enhancement.
 
 ### RBAC scope
 
@@ -142,6 +156,7 @@ descriptions.
 
 | Date       | Change                                                                                                                 | Reference |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------- | --------- |
+| 2026-05-02 | Operator now mints GitHub App installation tokens via `ghinstallation/v2` and passes the resulting short-lived (~1h) token to the worker as `RENOVATE_TOKEN`. App private key no longer leaves the operator's release namespace. Per-Run mirrored Secret carries only an `access-token` key. | INV-0003 / PR #11 |
 | 2026-05-02 | Worker pod template now compliant with PodSecurity `restricted` (added `runAsNonRoot`, `seccompProfile`, `allowPrivilegeEscalation`, `capabilities.drop=[ALL]`). Bundled with v0.1.2 fixes for INV-0001 + INV-0002. | PR #11    |
 | 2026-05-01 | First signed v0.1.0 release: cosign keyless OIDC against Sigstore Fulcio, syft SBOMs uploaded alongside images, multi-arch (amd64+arm64) image at `ghcr.io/donaldgifford/renovate-operator:0.1.0`, OCI Helm chart at `oci://ghcr.io/donaldgifford/charts/renovate-operator:0.1.0`. | v0.1.0    |
 | 2026-04-30 | RBAC `ClusterRole` for the operator finalized: namespace-bounded Secret access via `RoleBinding`, no cluster-wide Secret reads. | DESIGN-0001 |

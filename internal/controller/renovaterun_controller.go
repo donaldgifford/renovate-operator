@@ -164,17 +164,28 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 		"run admitted by controller", run.Generation)
 	run.Status.Phase = renovatev1alpha1.RunPhaseDiscovering
 
-	mirrored, err := r.mirrorCredential(ctx, run)
+	source, err := r.fetchSourceSecret(ctx, run)
 	if err != nil {
 		span.RecordError(err)
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
 
-	srcSecret := mirrored
-	plat, err := r.PlatformClientFactory(ctx, run.Spec.PlatformSnapshot, srcSecret)
+	plat, err := r.PlatformClientFactory(ctx, run.Spec.PlatformSnapshot, source)
 	if err != nil {
 		span.RecordError(err)
 		return r.markFailed(run, "platform client init: "+err.Error())
+	}
+
+	accessToken, _, err := plat.MintAccessToken(ctx)
+	if err != nil {
+		span.RecordError(err)
+		return r.markTransient(run, fmt.Errorf("mint access token: %w", err), conditions.ReasonReconcileError)
+	}
+
+	mirrored, err := r.mirrorCredential(ctx, run, accessToken)
+	if err != nil {
+		span.RecordError(err)
+		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
 
 	repos, err := r.discoverRepos(ctx, run, plat)
@@ -370,9 +381,12 @@ func (r *RenovateRunReconciler) markTransient(run *renovatev1alpha1.RenovateRun,
 	return ctrl.Result{RequeueAfter: requeueAfterRunTransient}, nil
 }
 
-// mirrorCredential ensures the per-Run mirrored Secret exists in the Run's
-// namespace, copied from the source Secret in OperatorNamespace.
-func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renovatev1alpha1.RenovateRun) (*corev1.Secret, error) {
+// fetchSourceSecret pulls the upstream credential Secret from the operator's
+// release namespace. It's the input to PlatformClientFactory (which needs the
+// raw PEM/token to construct a platform client). The Run never sees this
+// Secret directly — only the operator-minted access token gets mirrored
+// into the Run's namespace.
+func (r *RenovateRunReconciler) fetchSourceSecret(ctx context.Context, run *renovatev1alpha1.RenovateRun) (*corev1.Secret, error) {
 	srcName, err := credentials.SourceSecretName(run)
 	if err != nil {
 		return nil, err
@@ -381,8 +395,15 @@ func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renov
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: srcName}, src); err != nil {
 		return nil, fmt.Errorf("get source secret: %w", err)
 	}
+	return src, nil
+}
 
-	dst, err := credentials.BuildMirror(run, src)
+// mirrorCredential writes (or updates) the per-Run mirrored Secret with the
+// operator-minted access token under credentials.MirrorAccessTokenKey. The
+// worker pod mounts this Secret and consumes the token as RENOVATE_TOKEN —
+// see INV-0003.
+func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renovatev1alpha1.RenovateRun, accessToken string) (*corev1.Secret, error) {
+	dst, err := credentials.BuildMirror(run, accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -465,20 +486,12 @@ func (r *RenovateRunReconciler) ensureWorkerJob(ctx context.Context, run *renova
 	)
 	defer span.End()
 
-	cred := jobspec.CredentialMount{SecretName: mirrored.Name}
-	switch {
-	case run.Spec.PlatformSnapshot.Auth.GitHubApp != nil:
-		key := run.Spec.PlatformSnapshot.Auth.GitHubApp.PrivateKeyRef.Key
-		if key == "" {
-			key = defaultGitHubAppPEMKey
-		}
-		cred.PEMKey = key
-	case run.Spec.PlatformSnapshot.Auth.Token != nil:
-		key := run.Spec.PlatformSnapshot.Auth.Token.SecretRef.Key
-		if key == "" {
-			key = defaultTokenKey
-		}
-		cred.TokenKey = key
+	// Both auth modes converge on the access-token key in the mirrored
+	// Secret — operator mints an installation token for App auth and writes
+	// the static token through for Token auth. See INV-0003.
+	cred := jobspec.CredentialMount{
+		SecretName: mirrored.Name,
+		TokenKey:   credentials.MirrorAccessTokenKey,
 	}
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{

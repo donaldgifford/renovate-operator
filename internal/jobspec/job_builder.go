@@ -49,17 +49,15 @@ const (
 )
 
 // CredentialMount carries pointers into the mirrored credential Secret in
-// the Run's namespace. The Run reconciler resolves the Secret + key at Run
-// start; the builder only consumes the resolved names. Exactly one of
-// PEMKey or TokenKey is non-empty.
+// the Run's namespace. The Run reconciler mints an access token via
+// platform.Client.MintAccessToken, writes it into the mirrored Secret, and
+// the worker mounts it as RENOVATE_TOKEN. See INV-0003.
 type CredentialMount struct {
 	// SecretName is the mirrored Secret in the Run's namespace.
 	SecretName string
 
-	// PEMKey is the data key holding the GitHub App PEM (GitHubApp auth).
-	PEMKey string
-
-	// TokenKey is the data key holding the platform token (Token auth).
+	// TokenKey is the data key holding the access token (typically
+	// credentials.MirrorAccessTokenKey, "access-token").
 	TokenKey string
 }
 
