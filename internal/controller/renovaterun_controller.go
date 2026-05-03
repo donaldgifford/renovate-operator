@@ -188,8 +188,13 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
 
+	scanLabel, platLabel := runMetricLabels(run)
+	discoveryStart := r.Clock.Now()
 	repos, err := r.discoverRepos(ctx, run, plat)
+	observability.DiscoveryDurationSeconds.WithLabelValues(scanLabel, platLabel).
+		Observe(r.Clock.Now().Sub(discoveryStart).Seconds())
 	if err != nil {
+		observability.DiscoveryErrorsTotal.WithLabelValues(scanLabel, platLabel).Inc()
 		span.RecordError(err)
 		return r.handleDiscoverErr(run, err)
 	}
@@ -203,6 +208,7 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 	if err != nil {
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
+	observability.ShardCount.WithLabelValues(scanLabel, platLabel).Set(float64(actualWorkers))
 	run.Status.DiscoveredRepos = int32(len(repos))
 	run.Status.ActualWorkers = actualWorkers
 	run.Status.ShardConfigMapRef = &corev1.ObjectReference{
@@ -273,6 +279,7 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 		conditions.MarkTrue(&run.Status.Conditions,
 			conditions.TypeSucceeded, conditions.ReasonJobComplete,
 			"all shards completed successfully", run.Generation)
+		recordRunTerminal(run, observability.ResultSucceeded)
 		return ctrl.Result{}, nil
 	}
 
@@ -284,6 +291,12 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 			conditions.MarkTrue(&run.Status.Conditions,
 				conditions.TypeFailed, conditions.ReasonJobFailed,
 				"worker Job failed: "+c.Message, run.Generation)
+			scanLabel, platLabel := runMetricLabels(run)
+			if job.Status.Failed > 0 {
+				observability.ShardsFailedTotal.WithLabelValues(scanLabel, platLabel).
+					Add(float64(job.Status.Failed))
+			}
+			recordRunTerminal(run, observability.ResultFailed)
 			return ctrl.Result{}, nil
 		}
 	}
@@ -372,6 +385,7 @@ func (r *RenovateRunReconciler) markFailed(run *renovatev1alpha1.RenovateRun, ms
 	run.Status.Phase = renovatev1alpha1.RunPhaseFailed
 	conditions.MarkTrue(&run.Status.Conditions,
 		conditions.TypeFailed, conditions.ReasonDiscoveryFailed, msg, run.Generation)
+	recordRunTerminal(run, observability.ResultFailed)
 	return ctrl.Result{}, nil
 }
 
@@ -514,6 +528,28 @@ func (r *RenovateRunReconciler) ensureWorkerJob(ctx context.Context, run *renova
 	default:
 		return existing, nil
 	}
+}
+
+// runMetricLabels returns the (scan, platform) label values used by every
+// per-Run metric in internal/observability.
+func runMetricLabels(run *renovatev1alpha1.RenovateRun) (string, string) {
+	return run.Spec.ScanRef.Name, string(run.Spec.PlatformSnapshot.PlatformType)
+}
+
+// recordRunTerminal emits the per-Run terminal metrics (counter + duration
+// histogram) for this Run's scan/platform labels. Safe to call once per
+// terminal transition; callers must have set CompletionTime first.
+func recordRunTerminal(run *renovatev1alpha1.RenovateRun, result string) {
+	scan, plat := runMetricLabels(run)
+	observability.RunsTotal.WithLabelValues(scan, plat, result).Inc()
+	if run.Status.StartTime == nil || run.Status.CompletionTime == nil {
+		return
+	}
+	d := run.Status.CompletionTime.Sub(run.Status.StartTime.Time).Seconds()
+	if d < 0 {
+		return
+	}
+	observability.RunDurationSeconds.WithLabelValues(scan, plat).Observe(d)
 }
 
 func ownerRefForRun(run *renovatev1alpha1.RenovateRun) metav1.OwnerReference {

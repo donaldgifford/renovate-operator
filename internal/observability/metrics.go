@@ -20,11 +20,7 @@ limitations under the License.
 package observability
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/prometheus/client_golang/prometheus"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -111,49 +107,9 @@ var (
 )
 
 // Register adds the operator's collectors to the controller-runtime metrics
-// registry. Call once at startup; idempotent (re-registering the same
-// collectors panics, so guard accordingly if called more than once).
+// registry. Call once at startup; re-registering the same collectors panics.
 func Register() {
-	cs := collectors()
-	log := ctrl.Log.WithName("observability")
-	log.Info("registering operator metrics", "count", len(cs))
-
-	type named interface {
-		Describe(chan<- *prometheus.Desc)
-	}
-
-	for i, c := range cs {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error(fmt.Errorf("%v", r), "MustRegister panicked", "index", i)
-				}
-			}()
-			// Probe the collector's name via Describe — gives us a marker we can
-			// correlate with the Gather count below.
-			ch := make(chan *prometheus.Desc, 4)
-			if d, ok := c.(named); ok {
-				go func() { d.Describe(ch); close(ch) }()
-				if desc, ok := <-ch; ok {
-					log.Info("registering", "index", i, "desc", desc.String())
-				}
-			}
-			metrics.Registry.MustRegister(c)
-		}()
-	}
-
-	mfs, err := metrics.Registry.Gather()
-	if err != nil {
-		log.Error(err, "post-register gather")
-		return
-	}
-	var renovateNames []string
-	for _, mf := range mfs {
-		if name := mf.GetName(); strings.HasPrefix(name, "renovate_") {
-			renovateNames = append(renovateNames, name)
-		}
-	}
-	log.Info("post-register gather", "total_families", len(mfs), "renovate_families", len(renovateNames), "renovate_names", renovateNames)
+	metrics.Registry.MustRegister(collectors()...)
 }
 
 // collectors returns the slice of every metric this package owns. Tests use

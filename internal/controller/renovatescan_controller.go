@@ -38,6 +38,7 @@ import (
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 	"github.com/donaldgifford/renovate-operator/internal/clock"
 	"github.com/donaldgifford/renovate-operator/internal/conditions"
+	"github.com/donaldgifford/renovate-operator/internal/observability"
 )
 
 // requeueAfterMax caps a Scan's RequeueAfter so the controller never goes
@@ -148,6 +149,8 @@ func (r *RenovateScanReconciler) reconcile(ctx context.Context, scan *renovatev1
 	if err := r.refreshActiveRuns(ctx, scan); err != nil {
 		return ctrl.Result{}, fmt.Errorf("refresh active runs: %w", err)
 	}
+	observability.ActiveRuns.WithLabelValues(scan.Name, string(platform.Spec.PlatformType)).
+		Set(float64(len(scan.Status.ActiveRuns)))
 
 	conditions.MarkTrue(&scan.Status.Conditions,
 		conditions.TypeReady, conditions.ReasonNextRunComputed,

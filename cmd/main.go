@@ -32,7 +32,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -266,18 +265,6 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up ready check")
 		os.Exit(1)
-	}
-
-	// DEBUG: count metric families on the registry the manager will serve.
-	// Confirms the registry instance Register() touched is the one /metrics gathers from.
-	if mfs, err := crmetrics.Registry.Gather(); err == nil {
-		var renovateCount int
-		for _, mf := range mfs {
-			if name := mf.GetName(); len(name) > 9 && name[:9] == "renovate_" {
-				renovateCount++
-			}
-		}
-		setupLog.Info("registry gather", "total_families", len(mfs), "renovate_families", renovateCount)
 	}
 
 	setupLog.Info("Starting manager")
