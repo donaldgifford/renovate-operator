@@ -45,13 +45,16 @@ const (
 )
 
 // renovatePlatformID maps our PlatformType to Renovate's CLI platform string.
-// Forgejo speaks Gitea's API, so Renovate calls it "gitea".
+// Renovate v43+ has a first-class "forgejo" platform; passing "gitea" against
+// a real Forgejo instance triggers the "Detected Forgejo instance, please use
+// 'forgejo' platform instead" warning and uses Gitea-only API paths that
+// Forgejo rejects (every repo comes back as "Repository is forbidden").
 func renovatePlatformID(t v1alpha1.PlatformType) string {
 	switch t {
 	case v1alpha1.PlatformTypeGitHub:
 		return "github"
 	case v1alpha1.PlatformTypeForgejo:
-		return "gitea"
+		return "forgejo"
 	default:
 		return string(t)
 	}

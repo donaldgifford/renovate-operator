@@ -288,8 +288,8 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 	}
 	env := job.Spec.Template.Spec.Containers[0].Env
 
-	if got := envValue(env, "RENOVATE_PLATFORM"); got != "gitea" {
-		t.Errorf("RENOVATE_PLATFORM = %q, want gitea (forgejo speaks gitea API)", got)
+	if got := envValue(env, "RENOVATE_PLATFORM"); got != "forgejo" {
+		t.Errorf("RENOVATE_PLATFORM = %q, want forgejo (v43+ has dedicated forgejo platform)", got)
 	}
 	if envValue(env, "RENOVATE_GITHUB_APP_ID") != "" || envValue(env, "RENOVATE_GITHUB_APP_KEY") != "" {
 		t.Error("forgejo Job should not carry GitHub App env vars")
