@@ -21,7 +21,7 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
+      "datasource": {"type": "loki", "uid": "${datasource}"},
       "description": "Operator pod logs. Filter by scan/platform/level via the variables. JSON log shape is fixed by zap; trace_id is attached when a span is recording.",
       "gridPos": {"h": 16, "w": 24, "x": 0, "y": 0},
       "id": 1,
@@ -37,8 +37,8 @@
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
-          "expr": "{app_kubernetes_io_name=\"renovate-operator\", namespace=~\"$namespace\"} | json | level=~\"$level\" | scan=~\"$scan\" | platform=~\"$platform\"",
+          "datasource": {"type": "loki", "uid": "${datasource}"},
+          "expr": "{app=\"renovate-operator\", namespace=~\"$namespace\"} | json | level=~\"$level\" | scan=~\"$scan\" | platform=~\"$platform\"",
           "legendFormat": "",
           "queryType": "range",
           "refId": "A"
@@ -48,7 +48,7 @@
       "type": "logs"
     },
     {
-      "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
+      "datasource": {"type": "loki", "uid": "${datasource}"},
       "description": "Worker pod logs (Renovate CLI output). Workers run in the same namespace as the RenovateRun.",
       "gridPos": {"h": 16, "w": 24, "x": 0, "y": 16},
       "id": 2,
@@ -64,8 +64,8 @@
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
-          "expr": "{job=~\"renovate.*\", namespace=~\"$namespace\"}",
+          "datasource": {"type": "loki", "uid": "${datasource}"},
+          "expr": "{container=\"renovate\", namespace=~\"$namespace\"}",
           "legendFormat": "",
           "queryType": "range",
           "refId": "A"
@@ -81,15 +81,30 @@
   "templating": {
     "list": [
       {
+        "current": {"selected": false, "text": "Loki", "value": "loki"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Loki datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "loki",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
         "current": {"selected": true, "text": "All", "value": "$__all"},
-        "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
-        "definition": "label_values({app_kubernetes_io_name=\"renovate-operator\"}, namespace)",
+        "datasource": {"type": "loki", "uid": "${datasource}"},
+        "definition": "label_values(namespace)",
         "includeAll": true,
         "label": "namespace",
         "multi": true,
         "name": "namespace",
         "options": [],
-        "query": "label_values({app_kubernetes_io_name=\"renovate-operator\"}, namespace)",
+        "query": "label_values(namespace)",
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -115,24 +130,20 @@
         "type": "custom"
       },
       {
-        "current": {"selected": true, "text": "All", "value": "$__all"},
-        "includeAll": true,
+        "current": {"selected": true, "text": ".+", "value": ".+"},
         "label": "scan",
-        "multi": true,
         "name": "scan",
-        "options": [],
-        "query": ".*",
+        "options": [{"selected": true, "text": ".+", "value": ".+"}],
+        "query": ".+",
         "skipUrlSync": false,
         "type": "textbox"
       },
       {
-        "current": {"selected": true, "text": "All", "value": "$__all"},
-        "includeAll": true,
+        "current": {"selected": true, "text": ".+", "value": ".+"},
         "label": "platform",
-        "multi": true,
         "name": "platform",
-        "options": [],
-        "query": ".*",
+        "options": [{"selected": true, "text": ".+", "value": ".+"}],
+        "query": ".+",
         "skipUrlSync": false,
         "type": "textbox"
       }
@@ -145,16 +156,6 @@
   "uid": "renovate-operator-logs",
   "version": 1,
   "weekStart": "",
-  "__inputs": [
-    {
-      "name": "DS_LOKI",
-      "label": "Loki",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "loki",
-      "pluginName": "Loki"
-    }
-  ],
   "__requires": [
     {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
     {"type": "datasource", "id": "loki", "name": "Loki", "version": "1.0.0"}
