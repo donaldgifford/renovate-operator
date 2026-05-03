@@ -107,12 +107,9 @@ var (
 )
 
 // Register adds the operator's collectors to the controller-runtime metrics
-// registry. Call once at startup; idempotent (re-registering the same
-// collectors panics, so guard accordingly if called more than once).
+// registry. Call once at startup; re-registering the same collectors panics.
 func Register() {
-	for _, c := range collectors() {
-		metrics.Registry.MustRegister(c)
-	}
+	metrics.Registry.MustRegister(collectors()...)
 }
 
 // collectors returns the slice of every metric this package owns. Tests use

@@ -27,9 +27,15 @@ must be set. CEL validation on the CRD enforces this at admission time.
 
 ### GitHub App (`auth.githubApp`)
 
-Mints installation tokens via `bradleyfalzon/ghinstallation/v2`. Renovate itself
-does the per-call JWT minting; the operator only mints tokens for its own
-discovery API calls.
+The operator mints a short-lived (~1h) installation access token from the
+App's private key (via
+[`bradleyfalzon/ghinstallation/v2`](https://github.com/bradleyfalzon/ghinstallation))
+on every Run, writes the resulting token into a per-Run mirrored Secret
+in the Run's namespace, and the worker pod consumes it as
+`RENOVATE_TOKEN`. The App private key never leaves the operator's
+release namespace; the worker only ever sees the minted access token.
+See [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)
+for why we mint operator-side instead of letting Renovate do it.
 
 ```yaml
 apiVersion: renovate.fartlab.dev/v1alpha1
@@ -38,7 +44,9 @@ metadata:
   name: github
 spec:
   platformType: github
-  baseURL: https://api.github.com # optional; defaults to api.github.com
+  # baseURL: omitted for GitHub.com — only set for GitHub Enterprise Server
+  # (e.g., https://github.example.com). Setting it to https://api.github.com
+  # explicitly is unnecessary and was a footgun before the INV-0004 fix.
   auth:
     githubApp:
       appID: 123456

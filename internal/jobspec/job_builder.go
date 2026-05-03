@@ -49,17 +49,15 @@ const (
 )
 
 // CredentialMount carries pointers into the mirrored credential Secret in
-// the Run's namespace. The Run reconciler resolves the Secret + key at Run
-// start; the builder only consumes the resolved names. Exactly one of
-// PEMKey or TokenKey is non-empty.
+// the Run's namespace. The Run reconciler mints an access token via
+// platform.Client.MintAccessToken, writes it into the mirrored Secret, and
+// the worker mounts it as RENOVATE_TOKEN. See INV-0003.
 type CredentialMount struct {
 	// SecretName is the mirrored Secret in the Run's namespace.
 	SecretName string
 
-	// PEMKey is the data key holding the GitHub App PEM (GitHubApp auth).
-	PEMKey string
-
-	// TokenKey is the data key holding the platform token (Token auth).
+	// TokenKey is the data key holding the access token (typically
+	// credentials.MirrorAccessTokenKey, "access-token").
 	TokenKey string
 }
 
@@ -136,6 +134,15 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					// Pod-level SecurityContext satisfies PodSecurity admission's
+					// "restricted" profile alongside the container-level fields below.
+					SecurityContext: &corev1.PodSecurityContext{
+						//nolint:modernize // new(bool) returns *false; we need *true.
+						RunAsNonRoot: ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Volumes: []corev1.Volume{
 						{
 							Name: shardVolumeName,
@@ -154,6 +161,12 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 							Env:     envs,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: shardVolumeName, MountPath: ShardMountPath, ReadOnly: true},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: new(bool),
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
 							},
 						},
 					},

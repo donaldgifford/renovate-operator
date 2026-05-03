@@ -226,6 +226,8 @@ spec:
                         description: |-
                           Autodiscover enables platform-side repo enumeration. When false the
                           Scan's own renovateConfigOverrides must supply the repository list.
+                          Pointer so user-set false survives the JSON round-trip; nil applies
+                          the kubebuilder default. See INV-0005.
                         type: boolean
                       filter:
                         description: |-

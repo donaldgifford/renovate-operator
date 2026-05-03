@@ -30,28 +30,32 @@ import (
 const discoverPageSize = 100
 
 // Discover lists every repo in filter.Owner that survives the supplied
-// filters. v0.1.0 uses /orgs/{owner}/repos paginated; if that 404s the
-// caller is likely a user, so we fall back to /users/{user}/repos.
+// filters.
+//
+// App-auth Clients call /installation/repositories — the installation-scoped
+// endpoint that returns exactly what the App was granted (public + private).
+// The public /users/{owner}/repos fallback would silently leak every public
+// repo for the owner regardless of which repos the installation actually
+// authorized. See INV-0004.
+//
+// PAT-auth Clients have no installation concept and keep the existing
+// /orgs/{owner}/repos → /users/{owner}/repos fallback.
 func (c *Client) Discover(ctx context.Context, filter platform.DiscoveryFilter) ([]platform.Repository, error) {
 	if filter.Owner == "" {
 		return nil, fmt.Errorf("github: DiscoveryFilter.Owner required")
 	}
 
-	repos, err := c.listOrgRepos(ctx, filter.Owner)
+	var (
+		repos []*gogithub.Repository
+		err   error
+	)
+	if c.appTransport != nil {
+		repos, err = c.listInstallationRepos(ctx, filter.Owner)
+	} else {
+		repos, err = c.listOrgOrUserRepos(ctx, filter.Owner)
+	}
 	if err != nil {
-		// /orgs/{owner}/repos 404s for personal accounts; fall back.
-		var notFound bool
-		// errors.Is matches platform.ErrNotFound via our classifyErr wrapper.
-		if isNotFound(err) {
-			notFound = true
-		}
-		if !notFound {
-			return nil, err
-		}
-		repos, err = c.listUserRepos(ctx, filter.Owner)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	out := make([]platform.Repository, 0, len(repos))
@@ -62,6 +66,48 @@ func (c *Client) Discover(ctx context.Context, filter platform.DiscoveryFilter) 
 		out = append(out, toRepo(r))
 	}
 	return out, nil
+}
+
+// listOrgOrUserRepos is the PAT-auth path. /orgs/{owner}/repos 404s for
+// personal accounts; fall back to /users/{user}/repos.
+func (c *Client) listOrgOrUserRepos(ctx context.Context, owner string) ([]*gogithub.Repository, error) {
+	repos, err := c.listOrgRepos(ctx, owner)
+	if err != nil {
+		// errors.Is matches platform.ErrNotFound via our classifyErr wrapper.
+		if !isNotFound(err) {
+			return nil, err
+		}
+		return c.listUserRepos(ctx, owner)
+	}
+	return repos, nil
+}
+
+// listInstallationRepos lists the repos the App's installation has been
+// granted access to via /installation/repositories. The response is already
+// installation-scoped, but we still intersect with `owner` defensively so a
+// Client reused across owners returns the right slice.
+func (c *Client) listInstallationRepos(ctx context.Context, owner string) ([]*gogithub.Repository, error) {
+	opt := &gogithub.ListOptions{PerPage: discoverPageSize}
+	var all []*gogithub.Repository
+	for {
+		if err := c.wait(ctx); err != nil {
+			return nil, err
+		}
+		page, resp, err := c.gh.Apps.ListRepos(ctx, opt)
+		if err != nil {
+			return nil, classifyErr(resp, err)
+		}
+		for _, r := range page.Repositories {
+			if r.GetOwner().GetLogin() == owner {
+				all = append(all, r)
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return all, nil
 }
 
 func (c *Client) listOrgRepos(ctx context.Context, owner string) ([]*gogithub.Repository, error) {

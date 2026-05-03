@@ -90,8 +90,12 @@ func main() {
 	var pprofBindAddress string
 	flag.StringVar(&pprofBindAddress, "pprof-bind-address", "",
 		"The address the pprof endpoint binds to (e.g. :8082). Empty disables pprof.")
+	// Production default: JSON encoder + InfoLevel — aligns with the chart's
+	// `logging.format: json` value and the contrib/alloy stage.json pipeline,
+	// which both expect structured logs. Pass `--zap-devel=true` for local
+	// `make run` to get the console encoder back.
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()

@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	v1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 	"github.com/donaldgifford/renovate-operator/internal/jobspec"
@@ -64,10 +65,11 @@ func forgejoPlatform() v1alpha1.RenovatePlatformSpec {
 func nightlyScan() v1alpha1.RenovateScanSpec {
 	bli := int32(2)
 	return v1alpha1.RenovateScanSpec{
-		PlatformRef:             v1alpha1.LocalObjectReference{Name: "github"},
-		Schedule:                "0 2 * * *",
-		Workers:                 v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50, BackoffLimitPerIndex: &bli},
-		Discovery:               v1alpha1.DiscoverySpec{Autodiscover: true, RequireConfig: true},
+		PlatformRef: v1alpha1.LocalObjectReference{Name: "github"},
+		Schedule:    "0 2 * * *",
+		Workers:     v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50, BackoffLimitPerIndex: &bli},
+		//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+		Discovery:               v1alpha1.DiscoverySpec{Autodiscover: ptr.To(true), RequireConfig: ptr.To(true)},
 		RenovateConfigOverrides: &runtime.RawExtension{Raw: []byte(`{"labels":["dependencies"],"automerge":false}`)},
 	}
 }
@@ -88,7 +90,7 @@ func ghCMAndCred() (*corev1.ConfigMap, jobspec.CredentialMount) {
 			ObjectMeta: metav1.ObjectMeta{Name: "nightly-20260428-shards", Namespace: "renovate"},
 			Data:       map[string]string{"shard-0000.json": `{"index":0,"total":1,"repos":["donaldgifford/server-price-tracker"]}`},
 		},
-		jobspec.CredentialMount{SecretName: "renovate-creds-nightly-20260428", PEMKey: "private-key.pem"}
+		jobspec.CredentialMount{SecretName: "renovate-creds-nightly-20260428", TokenKey: "access-token"}
 }
 
 func happyPathJob(t *testing.T) (*batchv1.Job, *corev1.ConfigMap) {
@@ -199,11 +201,44 @@ func TestBuildWorkerJob_GitHub_PodAndContainer(t *testing.T) {
 	}
 }
 
+// TestBuildWorkerJob_PodSecuritySatisfiesRestricted asserts the worker pod
+// template carries the four fields required by PodSecurity admission's
+// "restricted" profile. Without these, namespaces enforcing
+// `pod-security.kubernetes.io/enforce: restricted` reject the worker Job's
+// pod and the Run reconciler stalls on Discovering.
+func TestBuildWorkerJob_PodSecuritySatisfiesRestricted(t *testing.T) {
+	t.Parallel()
+	job, _ := happyPathJob(t)
+	pod := job.Spec.Template.Spec
+
+	if pod.SecurityContext == nil {
+		t.Fatal("Pod.SecurityContext must be set for PodSecurity restricted")
+	}
+	if pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Errorf("Pod.SecurityContext.RunAsNonRoot = %v, want true", pod.SecurityContext.RunAsNonRoot)
+	}
+	if pod.SecurityContext.SeccompProfile == nil ||
+		pod.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("Pod.SecurityContext.SeccompProfile = %+v, want type=RuntimeDefault", pod.SecurityContext.SeccompProfile)
+	}
+
+	if len(pod.Containers) != 1 || pod.Containers[0].SecurityContext == nil {
+		t.Fatal("container SecurityContext must be set for PodSecurity restricted")
+	}
+	csc := pod.Containers[0].SecurityContext
+	if csc.AllowPrivilegeEscalation == nil || *csc.AllowPrivilegeEscalation {
+		t.Errorf("Container.SecurityContext.AllowPrivilegeEscalation = %v, want false", csc.AllowPrivilegeEscalation)
+	}
+	if csc.Capabilities == nil || len(csc.Capabilities.Drop) != 1 || csc.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("Container.SecurityContext.Capabilities.Drop = %+v, want [ALL]", csc.Capabilities)
+	}
+}
+
 func TestBuildWorkerJob_GitHub_EnvOrdering(t *testing.T) {
 	t.Parallel()
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
-		Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", PEMKey: "private-key.pem"},
+		Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -211,10 +246,10 @@ func TestBuildWorkerJob_GitHub_EnvOrdering(t *testing.T) {
 
 	env := job.Spec.Template.Spec.Containers[0].Env
 	got := envNames(env)
-	// Expected order: PLATFORM, LOG_LEVEL, LOG_FORMAT, ENDPOINT, AUTH (APP_ID, APP_KEY), AUTODISCOVER, REQUIRE_CONFIG, RENOVATE_CONFIG, OTEL_SERVICE_NAME, OTLP_ENDPOINT
+	// Expected order: PLATFORM, LOG_LEVEL, LOG_FORMAT, ENDPOINT, AUTH (TOKEN), AUTODISCOVER, REQUIRE_CONFIG, RENOVATE_CONFIG, OTEL_SERVICE_NAME, OTLP_ENDPOINT
 	want := []string{
 		"RENOVATE_PLATFORM", "LOG_LEVEL", "LOG_FORMAT", "RENOVATE_ENDPOINT",
-		"RENOVATE_GITHUB_APP_ID", "RENOVATE_GITHUB_APP_KEY",
+		"RENOVATE_TOKEN",
 		"RENOVATE_AUTODISCOVER", "RENOVATE_REQUIRE_CONFIG",
 		"RENOVATE_CONFIG", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT",
 	}
@@ -253,8 +288,8 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 	}
 	env := job.Spec.Template.Spec.Containers[0].Env
 
-	if got := envValue(env, "RENOVATE_PLATFORM"); got != "gitea" {
-		t.Errorf("RENOVATE_PLATFORM = %q, want gitea (forgejo speaks gitea API)", got)
+	if got := envValue(env, "RENOVATE_PLATFORM"); got != "forgejo" {
+		t.Errorf("RENOVATE_PLATFORM = %q, want forgejo (v43+ has dedicated forgejo platform)", got)
 	}
 	if envValue(env, "RENOVATE_GITHUB_APP_ID") != "" || envValue(env, "RENOVATE_GITHUB_APP_KEY") != "" {
 		t.Error("forgejo Job should not carry GitHub App env vars")
@@ -268,6 +303,94 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 	}
 }
 
+// TestBuildWorkerJob_AlwaysSetsRenovateToken covers INV-0003 (post-hypothesis-2):
+// both auth modes converge on a single RENOVATE_TOKEN env var sourced from
+// the per-Run mirrored Secret's access-token key. The operator mints an
+// installation token for App auth and writes the static token through for
+// Token auth — the worker doesn't see the upstream PEM/PAT directly.
+func TestBuildWorkerJob_AlwaysSetsRenovateToken(t *testing.T) {
+	t.Parallel()
+	t.Run("github-app", func(t *testing.T) {
+		t.Parallel()
+		job, _ := happyPathJob(t)
+		env := job.Spec.Template.Spec.Containers[0].Env
+		assertRenovateTokenSourcedFromAccessToken(t, env, "renovate-creds-nightly-20260428")
+	})
+	t.Run("forgejo-token", func(t *testing.T) {
+		t.Parallel()
+		run := ghRun()
+		run.Spec.PlatformSnapshot = forgejoPlatform()
+		job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
+			Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1,
+			Credential: jobspec.CredentialMount{SecretName: "creds", TokenKey: "access-token"},
+		})
+		if err != nil {
+			t.Fatalf("BuildWorkerJob err = %v", err)
+		}
+		env := job.Spec.Template.Spec.Containers[0].Env
+		assertRenovateTokenSourcedFromAccessToken(t, env, "creds")
+	})
+}
+
+// TestBuildWorkerJob_NoLegacyAppEnvVars asserts the post-INV-0003 contract:
+// the worker pod never sees RENOVATE_GITHUB_APP_ID / KEY. Those were the
+// dead-code env vars from hypothesis 1; now the operator mints a token and
+// the worker only consumes RENOVATE_TOKEN.
+func TestBuildWorkerJob_NoLegacyAppEnvVars(t *testing.T) {
+	t.Parallel()
+	job, _ := happyPathJob(t)
+	env := job.Spec.Template.Spec.Containers[0].Env
+	for _, name := range []string{"RENOVATE_GITHUB_APP_ID", "RENOVATE_GITHUB_APP_KEY", "RENOVATE_AUTODISCOVER_FILTER"} {
+		if envValue(env, name) != "" || envEntry(env, name) != nil {
+			t.Errorf("%s should not be set on the worker pod (INV-0003)", name)
+		}
+	}
+}
+
+// TestEntrypointShell_AlwaysSetsRenovateRepositories asserts the worker
+// entrypoint always exports RENOVATE_REPOSITORIES from the shard JSON. The
+// auth-type bifurcation introduced under hypothesis 1 was reverted —
+// authentication is supplied via RENOVATE_TOKEN (sourced from the mirrored
+// Secret), the same way for both auth modes.
+func TestEntrypointShell_AlwaysSetsRenovateRepositories(t *testing.T) {
+	t.Parallel()
+	shell := jobspec.EntrypointShell
+	for _, want := range []string{
+		`RENOVATE_REPOSITORIES="$(printf '%s' "$DATA" | jq -c '.repos')"`,
+		`export RENOVATE_REPOSITORIES`,
+		`exec renovate`,
+	} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("EntrypointShell missing %q", want)
+		}
+	}
+	for _, banned := range []string{
+		`RENOVATE_GITHUB_APP_ID`,
+		`RENOVATE_AUTODISCOVER_FILTER`,
+	} {
+		if strings.Contains(shell, banned) {
+			t.Errorf("EntrypointShell still references %q (INV-0003 hypothesis-1 leftover)", banned)
+		}
+	}
+}
+
+// assertRenovateTokenSourcedFromAccessToken verifies the worker's
+// RENOVATE_TOKEN env entry is a SecretKeyRef pointing at the named mirrored
+// Secret + access-token key.
+func assertRenovateTokenSourcedFromAccessToken(t *testing.T, env []corev1.EnvVar, wantSecret string) {
+	t.Helper()
+	tokenEnv := envEntry(env, "RENOVATE_TOKEN")
+	if tokenEnv == nil || tokenEnv.ValueFrom == nil || tokenEnv.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("RENOVATE_TOKEN missing or not SecretKeyRef: %+v", tokenEnv)
+	}
+	if tokenEnv.ValueFrom.SecretKeyRef.Name != wantSecret {
+		t.Errorf("RENOVATE_TOKEN SecretKeyRef.Name = %q, want %q", tokenEnv.ValueFrom.SecretKeyRef.Name, wantSecret)
+	}
+	if tokenEnv.ValueFrom.SecretKeyRef.Key != "access-token" {
+		t.Errorf("RENOVATE_TOKEN SecretKeyRef.Key = %q, want \"access-token\"", tokenEnv.ValueFrom.SecretKeyRef.Key)
+	}
+}
+
 func TestBuildWorkerJob_ExtraEnvAppendedLast(t *testing.T) {
 	t.Parallel()
 
@@ -277,7 +400,7 @@ func TestBuildWorkerJob_ExtraEnvAppendedLast(t *testing.T) {
 	run.Spec.ScanSnapshot = scan
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
-		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", PEMKey: "k"},
+		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -307,7 +430,7 @@ func TestBuildWorkerJob_Errors(t *testing.T) {
 			t.Parallel()
 			in := jobspec.BuildInput{
 				Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1,
-				Credential: jobspec.CredentialMount{SecretName: "s", PEMKey: "k"},
+				Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
 			}
 			tt.mutate(&in)
 			_, err := jobspec.BuildWorkerJob(in)
@@ -374,6 +497,10 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 		PlatformRef: v1alpha1.LocalObjectReference{Name: "p"},
 		Schedule:    "* * * * *",
 		Workers:     v1alpha1.WorkersSpec{MinWorkers: 1, MaxWorkers: 1, ReposPerWorker: 1},
+		// Explicit false survives now that the field is *bool — leaving it
+		// unset would apply the documented default (true). See INV-0005.
+		// new(bool) yields *bool→false, matching ptr.To(false) without the lint nag.
+		Discovery: v1alpha1.DiscoverySpec{RequireConfig: new(bool)},
 	}
 	platform := v1alpha1.RenovatePlatformSpec{
 		PlatformType:  v1alpha1.PlatformTypeGitHub,
@@ -392,7 +519,7 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 	}
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
 		Run: run, ShardConfigMap: cmFor("c"), ActualWorkers: 1,
-		Credential: jobspec.CredentialMount{SecretName: "s", PEMKey: "k"},
+		Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)

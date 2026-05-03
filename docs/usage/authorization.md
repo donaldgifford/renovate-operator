@@ -49,6 +49,21 @@ After creating the App and installing it on your org(s):
 | `privateKeyRef.name`                            | The private key is downloaded as a `.pem` file from the App settings page (one-time download). Store in a Kubernetes Secret in the operator's release namespace; the `name` here points at that Secret. |
 | `privateKeyRef.key`                             | The data key inside the Secret (default `private-key.pem`).                                                                                                                                             |
 
+### Discovery scope follows the installation grant
+
+The operator discovers repos through GitHub's installation-scoped
+`/installation/repositories` endpoint, which returns *exactly* the repos
+the App was granted — public **and** private. Repos outside the
+installation grant (e.g., other public repos owned by the same user)
+are never enumerated, never cloned, never touched. This is enforced
+client-side in `internal/platform/github/discover.go` and verified in
+INV-0004; see that doc for the bug history.
+
+In practice: if your App is installed with **"Only select repositories"**,
+only those repos can ever be discovered. Switch to **"All repositories"**
+on the installation if you want broader coverage — adding a new repo to
+GitHub will then automatically pick it up on the next Scan.
+
 ### Multiple installations of one App
 
 A GitHub App registered once can be installed on many orgs. Each installation

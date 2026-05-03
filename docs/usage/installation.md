@@ -140,10 +140,62 @@ The full chart values surface lives at
 
 | Key                                       | Default                          | Notes                                       |
 | ----------------------------------------- | -------------------------------- | ------------------------------------------- |
-| `metrics.enabled`                         | `true`                           | Exposes Prometheus on port 8080.            |
+| `metrics.enabled`                         | `true`                           | Exposes Prometheus on port 8443 (HTTPS, authn-gated). |
 | `metrics.serviceMonitor.enabled`          | `false`                          | Requires Prometheus Operator.               |
 | `metrics.serviceMonitor.additionalLabels` | `release: kube-prometheus-stack` | Match your Prometheus selector.             |
 | `metrics.prometheusRule.enabled`          | `false`                          | Ships the bundled alerts + recording rules. |
+
+#### Authorize Prometheus to scrape `/metrics`
+
+The operator's `:8443/metrics` endpoint sits behind controller-runtime's
+`WithAuthenticationAndAuthorization` filter — every caller must present a
+bearer token whose `tokenreview` resolves to a subject with `get` on the
+cluster-scoped `nonResourceURL=/metrics`. The chart bundles the
+`renovate-operator-metrics-reader` `ClusterRole` for that purpose, but
+it does **not** ship a `ClusterRoleBinding` — the chart can't know
+which `ServiceAccount` your Prometheus runs as.
+
+Wire it up at deploy time. For `kube-prometheus-stack` (default
+`ServiceAccount` is `kube-prometheus-stack-prometheus` in the
+`monitoring` namespace):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-prometheus-stack-renovate-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: renovate-operator-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: kube-prometheus-stack-prometheus
+    namespace: monitoring
+```
+
+Confirm your Prom's `ServiceAccount` first:
+
+```bash
+kubectl get pod -A -l app.kubernetes.io/name=prometheus \
+  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SA:.spec.serviceAccountName'
+```
+
+Apply the binding (or PR it into your GitOps source). Within one
+scrape interval (~30s), Prometheus will start receiving 200s and
+metric series will populate:
+
+```bash
+curl -s 'https://<your-prometheus>/api/v1/label/__name__/values' \
+  | jq '.data[] | select(. | test("renovate"; "i"))'
+# expect: renovate_operator_runs_total, renovate_operator_active_runs, etc.
+```
+
+Without the binding, the scrape target shows `health=up` (the TLS
+handshake succeeds and the auth filter responds) but every request
+returns `403 Forbidden` and no series ever appear in Prometheus's TSDB.
+See the *Scrape healthy but no series in Prometheus* troubleshooting
+entry below.
 
 ### Tracing
 
@@ -279,6 +331,33 @@ Watch for rate-limit warnings (GitHub App: 4500 req/hr per installation;
 Forgejo: per-token configurable). If the discovery is filter-heavy and exhausts
 the budget, lower `discovery.filter` cardinality or reduce schedule frequency.
 
+### Worker pods rejected by PodSecurity admission
+
+Symptom: `RenovateRun` sits with no `Status.Phase` and no worker pod ever
+appears. Controller logs include lines like:
+
+```text
+would violate PodSecurity "restricted:latest": allowPrivilegeEscalation != false (...),
+unrestricted capabilities (...), runAsNonRoot != true (...), seccompProfile (...)
+```
+
+The Run's namespace has
+`pod-security.kubernetes.io/enforce=restricted` (or stricter) and the
+operator image is older than v0.1.2. v0.1.0 / v0.1.1 shipped a worker
+pod template missing the four PSA `restricted` fields; v0.1.2 added
+them ([SECURITY.md](../../SECURITY.md) → "Pod Security"). Upgrade:
+
+```bash
+helm upgrade -n renovate-system renovate-operator \
+  oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.1.2 \
+  -f values.yaml --reuse-values
+kubectl rollout restart deployment/renovate-operator-controller-manager -n renovate-system
+```
+
+If you're running the unreleased `dev-ci` image while iterating on a PR,
+make sure the deployment's `imagePullPolicy` is `Always` and rollout
+restart after each push.
+
 ### Worker `Job` `BackoffLimitExceeded`
 
 Renovate CLI itself errored on one or more shards.
@@ -306,6 +385,33 @@ at install time. Re-`helm upgrade` with it set to `true`.
 If it is there but Prometheus isn't picking it up, your Prometheus selector
 doesn't match — adjust `metrics.serviceMonitor.additionalLabels` to a label your
 Prometheus instance watches. Default ships `release: kube-prometheus-stack`.
+
+### Scrape healthy but no series in Prometheus
+
+Symptom: `prometheus.../api/v1/targets` shows the operator scrape target as
+`health=up` with no `lastError`, yet querying any `renovate_operator_*` metric
+returns an empty result, and `prometheus.../api/v1/label/__name__/values`
+contains zero series matching `renovate`.
+
+The auth filter is rejecting Prometheus's bearer token with `403 Forbidden`,
+but `kube-prometheus-stack` (and many other Prom flavors) treats any HTTP
+response as "up" if the TLS handshake succeeded. The empty TSDB is the real
+signal.
+
+Confirm with a direct curl from inside the cluster:
+
+```bash
+TOKEN=$(kubectl -n renovate-system create token renovate-operator-controller-manager)
+kubectl -n renovate-system port-forward deploy/renovate-operator-controller-manager 8443:8443 &
+sleep 1
+curl -ski -H "Authorization: Bearer $TOKEN" https://localhost:8443/metrics | head -5
+```
+
+If the response starts with `HTTP/1.1 403 Forbidden` and a body like
+`Authorization denied for user system:serviceaccount:...`, Prometheus's
+`ServiceAccount` lacks the `renovate-operator-metrics-reader` `ClusterRole`.
+Bind it — see *Authorize Prometheus to scrape `/metrics`* in the Configuration
+reference above.
 
 ### Tracing not exporting
 

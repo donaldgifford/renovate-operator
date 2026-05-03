@@ -31,12 +31,14 @@ import (
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
+	"github.com/donaldgifford/renovate-operator/internal/credentials"
 	"github.com/donaldgifford/renovate-operator/internal/platform"
 )
 
@@ -46,6 +48,8 @@ type stubPlatformClient struct {
 	hasConfig   bool
 	discoverErr error
 	configErr   error
+	mintToken   string
+	mintErr     error
 }
 
 func (s *stubPlatformClient) Discover(_ context.Context, _ platform.DiscoveryFilter) ([]platform.Repository, error) {
@@ -60,6 +64,17 @@ func (s *stubPlatformClient) HasRenovateConfig(_ context.Context, _ platform.Rep
 		return false, s.configErr
 	}
 	return s.hasConfig, nil
+}
+
+func (s *stubPlatformClient) MintAccessToken(_ context.Context) (string, time.Time, error) {
+	if s.mintErr != nil {
+		return "", time.Time{}, s.mintErr
+	}
+	tok := s.mintToken
+	if tok == "" {
+		tok = "stub-access-token"
+	}
+	return tok, time.Time{}, nil
 }
 
 func newRunScheme(t *testing.T) *runtime.Scheme {
@@ -111,8 +126,9 @@ func runFixture(name, ns, opNS string) (*renovatev1alpha1.RenovateRun, *corev1.S
 					ReposPerWorker: 50,
 				},
 				Discovery: renovatev1alpha1.DiscoverySpec{
-					Autodiscover:  true,
-					RequireConfig: false,
+					//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+					Autodiscover:  ptr.To(true),
+					RequireConfig: new(bool),
 				},
 			},
 		},
@@ -250,7 +266,8 @@ func TestRunReconcile_DiscoverTransientErrorRequeues(t *testing.T) {
 func TestRunReconcile_RequireConfigFiltersRepos(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("filter", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
 		hasConfig: true,
@@ -360,7 +377,8 @@ func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
 func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("skip", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
 		hasConfig: false,
@@ -387,7 +405,8 @@ func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 func TestRunReconcile_RequireConfigHasConfigErrorPropagates(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("config-err", "team-ns", "renovate-system")
-	run.Spec.ScanSnapshot.Discovery.RequireConfig = true
+	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
+	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
 		repos:     []platform.Repository{{Slug: "team-ns/a"}, {Slug: "team-ns/b"}},
 		configErr: platform.ErrTransient,
@@ -633,8 +652,9 @@ func TestMirrorCredential_UpdatesExisting(t *testing.T) {
 	t.Parallel()
 	run, src := runFixture("mirror-update", "team-ns", "renovate-system")
 
-	// Pre-existing mirror with old data — mirrorCredential should update it.
-	// Mirror name is `renovate-creds-<runName>` per credentials.MirrorName.
+	// Pre-existing mirror with old data — mirrorCredential should overwrite
+	// with the freshly-minted access token. Mirror name is
+	// `renovate-creds-<runName>` per credentials.MirrorName.
 	dst := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "renovate-creds-" + run.Name,
@@ -645,12 +665,12 @@ func TestMirrorCredential_UpdatesExisting(t *testing.T) {
 
 	r := newRunReconciler(t, nil, run, src, dst)
 
-	updated, err := r.mirrorCredential(context.Background(), run)
+	updated, err := r.mirrorCredential(context.Background(), run, "freshly-minted-token")
 	if err != nil {
 		t.Fatalf("mirrorCredential err = %v", err)
 	}
-	if string(updated.Data["private-key.pem"]) == "" {
-		t.Error("updated secret missing private-key.pem")
+	if string(updated.Data[credentials.MirrorAccessTokenKey]) != "freshly-minted-token" {
+		t.Errorf("access-token = %q", string(updated.Data[credentials.MirrorAccessTokenKey]))
 	}
 	if _, hasStale := updated.Data["stale"]; hasStale {
 		t.Error("update should have replaced data; stale key still present")
@@ -677,13 +697,12 @@ func ioErrReconciler(t *testing.T, funcs interceptor.Funcs, objs ...client.Objec
 	}
 }
 
-func TestMirrorCredential_GetSourceErrorWrapped(t *testing.T) {
+func TestFetchSourceSecret_GetErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("mirror-get-err", "team-ns", "renovate-system")
+	run, src := runFixture("source-get-err", "team-ns", "renovate-system")
 
 	r := ioErrReconciler(t, interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			// Only intercept the source-secret Get. Mirror Get is in another namespace.
 			if key.Namespace == "renovate-system" && key.Name == "creds" {
 				return fmt.Errorf("apiserver flake")
 			}
@@ -691,9 +710,9 @@ func TestMirrorCredential_GetSourceErrorWrapped(t *testing.T) {
 		},
 	}, run, src)
 
-	_, err := r.mirrorCredential(context.Background(), run)
+	_, err := r.fetchSourceSecret(context.Background(), run)
 	if err == nil {
-		t.Fatal("mirrorCredential err = nil")
+		t.Fatal("fetchSourceSecret err = nil")
 	}
 	if !strings.Contains(err.Error(), "get source secret") {
 		t.Errorf("err = %v, want wrapped 'get source secret'", err)
@@ -710,7 +729,7 @@ func TestMirrorCredential_CreateErrorWrapped(t *testing.T) {
 		},
 	}, run, src)
 
-	_, err := r.mirrorCredential(context.Background(), run)
+	_, err := r.mirrorCredential(context.Background(), run, "tok")
 	if err == nil {
 		t.Fatal("mirrorCredential err = nil")
 	}
@@ -811,7 +830,7 @@ func TestMirrorCredential_UpdateErrorWrapped(t *testing.T) {
 		},
 	}, run, src, dst)
 
-	_, err := r.mirrorCredential(context.Background(), run)
+	_, err := r.mirrorCredential(context.Background(), run, "tok")
 	if err == nil {
 		t.Fatal("mirrorCredential err = nil")
 	}

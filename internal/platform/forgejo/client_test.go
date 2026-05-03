@@ -167,3 +167,29 @@ func TestNewValidatesInputs(t *testing.T) {
 		t.Error("New without token should error")
 	}
 }
+
+// TestMintAccessToken_ReturnsStaticToken covers the Forgejo path: there's
+// no token-minting on Forgejo (the configured PAT is what we use), so
+// MintAccessToken returns the static token unchanged with a zero expiresAt.
+func TestMintAccessToken_ReturnsStaticToken(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"10.0.0"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := forgejo.New(forgejo.Auth{BaseURL: srv.URL, Token: "fjt-static"})
+	if err != nil {
+		t.Fatalf("forgejo.New: %v", err)
+	}
+	tok, expiresAt, err := c.MintAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	if tok != "fjt-static" {
+		t.Errorf("token = %q, want fjt-static", tok)
+	}
+	if !expiresAt.IsZero() {
+		t.Errorf("expiresAt = %v, want zero", expiresAt)
+	}
+}

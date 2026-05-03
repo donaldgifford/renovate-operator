@@ -164,21 +164,37 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 		"run admitted by controller", run.Generation)
 	run.Status.Phase = renovatev1alpha1.RunPhaseDiscovering
 
-	mirrored, err := r.mirrorCredential(ctx, run)
+	source, err := r.fetchSourceSecret(ctx, run)
 	if err != nil {
 		span.RecordError(err)
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
 
-	srcSecret := mirrored
-	plat, err := r.PlatformClientFactory(ctx, run.Spec.PlatformSnapshot, srcSecret)
+	plat, err := r.PlatformClientFactory(ctx, run.Spec.PlatformSnapshot, source)
 	if err != nil {
 		span.RecordError(err)
 		return r.markFailed(run, "platform client init: "+err.Error())
 	}
 
-	repos, err := r.discoverRepos(ctx, run, plat)
+	accessToken, _, err := plat.MintAccessToken(ctx)
 	if err != nil {
+		span.RecordError(err)
+		return r.markTransient(run, fmt.Errorf("mint access token: %w", err), conditions.ReasonReconcileError)
+	}
+
+	mirrored, err := r.mirrorCredential(ctx, run, accessToken)
+	if err != nil {
+		span.RecordError(err)
+		return r.markTransient(run, err, conditions.ReasonReconcileError)
+	}
+
+	scanLabel, platLabel := runMetricLabels(run)
+	discoveryStart := r.Clock.Now()
+	repos, err := r.discoverRepos(ctx, run, plat)
+	observability.DiscoveryDurationSeconds.WithLabelValues(scanLabel, platLabel).
+		Observe(r.Clock.Now().Sub(discoveryStart).Seconds())
+	if err != nil {
+		observability.DiscoveryErrorsTotal.WithLabelValues(scanLabel, platLabel).Inc()
 		span.RecordError(err)
 		return r.handleDiscoverErr(run, err)
 	}
@@ -192,6 +208,7 @@ func (r *RenovateRunReconciler) discoverAndDispatch(ctx context.Context, run *re
 	if err != nil {
 		return r.markTransient(run, err, conditions.ReasonReconcileError)
 	}
+	observability.ShardCount.WithLabelValues(scanLabel, platLabel).Set(float64(actualWorkers))
 	run.Status.DiscoveredRepos = int32(len(repos))
 	run.Status.ActualWorkers = actualWorkers
 	run.Status.ShardConfigMapRef = &corev1.ObjectReference{
@@ -262,6 +279,7 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 		conditions.MarkTrue(&run.Status.Conditions,
 			conditions.TypeSucceeded, conditions.ReasonJobComplete,
 			"all shards completed successfully", run.Generation)
+		recordRunTerminal(run, observability.ResultSucceeded)
 		return ctrl.Result{}, nil
 	}
 
@@ -273,6 +291,12 @@ func (r *RenovateRunReconciler) observeJob(ctx context.Context, run *renovatev1a
 			conditions.MarkTrue(&run.Status.Conditions,
 				conditions.TypeFailed, conditions.ReasonJobFailed,
 				"worker Job failed: "+c.Message, run.Generation)
+			scanLabel, platLabel := runMetricLabels(run)
+			if job.Status.Failed > 0 {
+				observability.ShardsFailedTotal.WithLabelValues(scanLabel, platLabel).
+					Add(float64(job.Status.Failed))
+			}
+			recordRunTerminal(run, observability.ResultFailed)
 			return ctrl.Result{}, nil
 		}
 	}
@@ -293,8 +317,8 @@ func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovate
 		Owner:        owner,
 		Patterns:     run.Spec.ScanSnapshot.Discovery.Filter,
 		Topics:       run.Spec.ScanSnapshot.Discovery.Topics,
-		SkipForks:    run.Spec.ScanSnapshot.Discovery.SkipForks,
-		SkipArchived: run.Spec.ScanSnapshot.Discovery.SkipArchived,
+		SkipForks:    run.Spec.ScanSnapshot.Discovery.SkipForksEnabled(),
+		SkipArchived: run.Spec.ScanSnapshot.Discovery.SkipArchivedEnabled(),
 	}
 	all, err := plat.Discover(ctx, filter)
 	if err != nil {
@@ -302,7 +326,7 @@ func (r *RenovateRunReconciler) discoverRepos(ctx context.Context, run *renovate
 		return nil, err
 	}
 	span.SetAttributes(attribute.Int("repos.found", len(all)))
-	if !run.Spec.ScanSnapshot.Discovery.RequireConfig {
+	if !run.Spec.ScanSnapshot.Discovery.RequireConfigEnabled() {
 		return all, nil
 	}
 
@@ -361,6 +385,7 @@ func (r *RenovateRunReconciler) markFailed(run *renovatev1alpha1.RenovateRun, ms
 	run.Status.Phase = renovatev1alpha1.RunPhaseFailed
 	conditions.MarkTrue(&run.Status.Conditions,
 		conditions.TypeFailed, conditions.ReasonDiscoveryFailed, msg, run.Generation)
+	recordRunTerminal(run, observability.ResultFailed)
 	return ctrl.Result{}, nil
 }
 
@@ -370,9 +395,12 @@ func (r *RenovateRunReconciler) markTransient(run *renovatev1alpha1.RenovateRun,
 	return ctrl.Result{RequeueAfter: requeueAfterRunTransient}, nil
 }
 
-// mirrorCredential ensures the per-Run mirrored Secret exists in the Run's
-// namespace, copied from the source Secret in OperatorNamespace.
-func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renovatev1alpha1.RenovateRun) (*corev1.Secret, error) {
+// fetchSourceSecret pulls the upstream credential Secret from the operator's
+// release namespace. It's the input to PlatformClientFactory (which needs the
+// raw PEM/token to construct a platform client). The Run never sees this
+// Secret directly — only the operator-minted access token gets mirrored
+// into the Run's namespace.
+func (r *RenovateRunReconciler) fetchSourceSecret(ctx context.Context, run *renovatev1alpha1.RenovateRun) (*corev1.Secret, error) {
 	srcName, err := credentials.SourceSecretName(run)
 	if err != nil {
 		return nil, err
@@ -381,8 +409,15 @@ func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renov
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: srcName}, src); err != nil {
 		return nil, fmt.Errorf("get source secret: %w", err)
 	}
+	return src, nil
+}
 
-	dst, err := credentials.BuildMirror(run, src)
+// mirrorCredential writes (or updates) the per-Run mirrored Secret with the
+// operator-minted access token under credentials.MirrorAccessTokenKey. The
+// worker pod mounts this Secret and consumes the token as RENOVATE_TOKEN —
+// see INV-0003.
+func (r *RenovateRunReconciler) mirrorCredential(ctx context.Context, run *renovatev1alpha1.RenovateRun, accessToken string) (*corev1.Secret, error) {
+	dst, err := credentials.BuildMirror(run, accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -465,20 +500,12 @@ func (r *RenovateRunReconciler) ensureWorkerJob(ctx context.Context, run *renova
 	)
 	defer span.End()
 
-	cred := jobspec.CredentialMount{SecretName: mirrored.Name}
-	switch {
-	case run.Spec.PlatformSnapshot.Auth.GitHubApp != nil:
-		key := run.Spec.PlatformSnapshot.Auth.GitHubApp.PrivateKeyRef.Key
-		if key == "" {
-			key = defaultGitHubAppPEMKey
-		}
-		cred.PEMKey = key
-	case run.Spec.PlatformSnapshot.Auth.Token != nil:
-		key := run.Spec.PlatformSnapshot.Auth.Token.SecretRef.Key
-		if key == "" {
-			key = defaultTokenKey
-		}
-		cred.TokenKey = key
+	// Both auth modes converge on the access-token key in the mirrored
+	// Secret — operator mints an installation token for App auth and writes
+	// the static token through for Token auth. See INV-0003.
+	cred := jobspec.CredentialMount{
+		SecretName: mirrored.Name,
+		TokenKey:   credentials.MirrorAccessTokenKey,
 	}
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
@@ -501,6 +528,28 @@ func (r *RenovateRunReconciler) ensureWorkerJob(ctx context.Context, run *renova
 	default:
 		return existing, nil
 	}
+}
+
+// runMetricLabels returns the (scan, platform) label values used by every
+// per-Run metric in internal/observability.
+func runMetricLabels(run *renovatev1alpha1.RenovateRun) (string, string) {
+	return run.Spec.ScanRef.Name, string(run.Spec.PlatformSnapshot.PlatformType)
+}
+
+// recordRunTerminal emits the per-Run terminal metrics (counter + duration
+// histogram) for this Run's scan/platform labels. Safe to call once per
+// terminal transition; callers must have set CompletionTime first.
+func recordRunTerminal(run *renovatev1alpha1.RenovateRun, result string) {
+	scan, plat := runMetricLabels(run)
+	observability.RunsTotal.WithLabelValues(scan, plat, result).Inc()
+	if run.Status.StartTime == nil || run.Status.CompletionTime == nil {
+		return
+	}
+	d := run.Status.CompletionTime.Sub(run.Status.StartTime.Time).Seconds()
+	if d < 0 {
+		return
+	}
+	observability.RunDurationSeconds.WithLabelValues(scan, plat).Observe(d)
 }
 
 func ownerRefForRun(run *renovatev1alpha1.RenovateRun) metav1.OwnerReference {

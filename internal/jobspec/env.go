@@ -33,8 +33,6 @@ const (
 	envRenovateAutodiscover = "RENOVATE_AUTODISCOVER"
 	envRenovateRequireCfg   = "RENOVATE_REQUIRE_CONFIG"
 	envRenovateConfig       = "RENOVATE_CONFIG"
-	envRenovateGitHubAppID  = "RENOVATE_GITHUB_APP_ID"
-	envRenovateGitHubAppKey = "RENOVATE_GITHUB_APP_KEY"
 	envRenovateToken        = "RENOVATE_TOKEN" // #nosec G101 -- env var name, not a credential
 
 	envLogLevel  = "LOG_LEVEL"
@@ -47,13 +45,16 @@ const (
 )
 
 // renovatePlatformID maps our PlatformType to Renovate's CLI platform string.
-// Forgejo speaks Gitea's API, so Renovate calls it "gitea".
+// Renovate v43+ has a first-class "forgejo" platform; passing "gitea" against
+// a real Forgejo instance triggers the "Detected Forgejo instance, please use
+// 'forgejo' platform instead" warning and uses Gitea-only API paths that
+// Forgejo rejects (every repo comes back as "Repository is forbidden").
 func renovatePlatformID(t v1alpha1.PlatformType) string {
 	switch t {
 	case v1alpha1.PlatformTypeGitHub:
 		return "github"
 	case v1alpha1.PlatformTypeForgejo:
-		return "gitea"
+		return "forgejo"
 	default:
 		return string(t)
 	}
@@ -82,9 +83,13 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	}
 	out = append(out, authEnvs...)
 
-	// 3. Discovery
+	// 3. Discovery. The operator owns the repo list end-to-end and ships it
+	//    via RENOVATE_REPOSITORIES (set by the entrypoint shell from the
+	//    shard JSON), so RENOVATE_AUTODISCOVER stays "false" for both auth
+	//    types. The operator-minted access token is what makes platform init
+	//    work — see INV-0003.
 	out = append(out, corev1.EnvVar{Name: envRenovateAutodiscover, Value: "false"})
-	if scan.Discovery.RequireConfig {
+	if scan.Discovery.RequireConfigEnabled() {
 		out = append(out, corev1.EnvVar{Name: envRenovateRequireCfg, Value: "required"})
 	}
 
@@ -121,45 +126,29 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	return out, nil
 }
 
+// buildAuthEnv resolves the worker's credential env. Both auth modes converge
+// on RENOVATE_TOKEN sourced from the per-Run mirrored Secret's access-token
+// key — the operator mints an installation token for App auth and passes
+// through the static token for Token auth (see INV-0003). The platform
+// type only matters at controller side (Discovery + token mint).
 func buildAuthEnv(platform v1alpha1.RenovatePlatformSpec, cred CredentialMount) ([]corev1.EnvVar, error) {
-	switch {
-	case platform.Auth.GitHubApp != nil:
-		if cred.PEMKey == "" {
-			return nil, fmt.Errorf("jobspec: GitHubApp auth requires CredentialMount.PEMKey")
-		}
-		return []corev1.EnvVar{
-			{
-				Name:  envRenovateGitHubAppID,
-				Value: fmt.Sprintf("%d", platform.Auth.GitHubApp.AppID),
-			},
-			{
-				Name: envRenovateGitHubAppKey,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
-						Key:                  cred.PEMKey,
-					},
-				},
-			},
-		}, nil
-	case platform.Auth.Token != nil:
-		if cred.TokenKey == "" {
-			return nil, fmt.Errorf("jobspec: Token auth requires CredentialMount.TokenKey")
-		}
-		return []corev1.EnvVar{
-			{
-				Name: envRenovateToken,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
-						Key:                  cred.TokenKey,
-					},
-				},
-			},
-		}, nil
-	default:
+	if platform.Auth.GitHubApp == nil && platform.Auth.Token == nil {
 		return nil, fmt.Errorf("jobspec: PlatformAuth has neither githubApp nor token set")
 	}
+	if cred.TokenKey == "" {
+		return nil, fmt.Errorf("jobspec: CredentialMount.TokenKey is required")
+	}
+	return []corev1.EnvVar{
+		{
+			Name: envRenovateToken,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
+					Key:                  cred.TokenKey,
+				},
+			},
+		},
+	}, nil
 }
 
 // mergeRenovateConfig combines platform.runnerConfig and scan.renovateConfigOverrides

@@ -115,6 +115,12 @@ ensure that any custom configuration previously added to
 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml' is manually
 re-applied afterwards.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting, supported
+versions, supply-chain (image signing + SBOM), pod security, credential
+handling, RBAC scope, and the security changelog.
+
 ## Contributing
 
 // TODO(user): Add detailed information on how you would like others to

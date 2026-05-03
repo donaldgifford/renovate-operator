@@ -23,7 +23,6 @@ package credentials
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +31,12 @@ import (
 
 	v1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 )
+
+// MirrorAccessTokenKey is the data key under which the per-Run mirrored
+// Secret stores the platform access token. The worker pod consumes it as
+// RENOVATE_TOKEN. See INV-0003 for why we mint and store a token rather
+// than passing through the upstream PEM/PAT.
+const MirrorAccessTokenKey = "access-token"
 
 // LabelManaged marks a Secret as a per-Run mirror so the operator can
 // confidently overwrite or delete it without colliding with user Secrets.
@@ -56,9 +61,8 @@ func MirrorName(runName string) string {
 // ErrNilRun is returned when BuildMirror is called with a nil Run.
 var ErrNilRun = errors.New("credentials: nil Run")
 
-// ErrSourceMissingKey is returned when the source Secret lacks the auth
-// key (PEM for GitHubApp, token for Token auth).
-var ErrSourceMissingKey = errors.New("credentials: source Secret missing required key")
+// ErrEmptyAccessToken is returned when BuildMirror is called with no token.
+var ErrEmptyAccessToken = errors.New("credentials: access token is empty")
 
 // AuthKey resolves the data key for a Run's snapshotted auth. Defaults to
 // "private-key.pem" for GitHubApp and "token" for Token when the user-supplied
@@ -104,25 +108,19 @@ func SourceSecretName(run *v1alpha1.RenovateRun) (string, error) {
 }
 
 // BuildMirror constructs the destination Secret in the Run's namespace,
-// copying the auth key out of the source Secret's Data. The caller is
-// expected to client.Create or Patch the result.
+// stamping the operator-minted access token under MirrorAccessTokenKey.
+// The worker pod mounts this Secret and consumes the token as
+// RENOVATE_TOKEN. See INV-0003 for why we ship a token rather than the
+// upstream PEM/PAT.
 //
 // The Run owns the mirror via OwnerReference so cascade delete cleans up
 // when the Run is GC'd by its parent Scan's history-limit policy.
-func BuildMirror(run *v1alpha1.RenovateRun, source *corev1.Secret) (*corev1.Secret, error) {
+func BuildMirror(run *v1alpha1.RenovateRun, accessToken string) (*corev1.Secret, error) {
 	if run == nil {
 		return nil, ErrNilRun
 	}
-	if source == nil {
-		return nil, fmt.Errorf("credentials: nil source Secret")
-	}
-	key, err := AuthKey(run)
-	if err != nil {
-		return nil, err
-	}
-	val, ok := source.Data[key]
-	if !ok || len(val) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrSourceMissingKey, key)
+	if accessToken == "" {
+		return nil, ErrEmptyAccessToken
 	}
 
 	yes := true
@@ -147,17 +145,9 @@ func BuildMirror(run *v1alpha1.RenovateRun, source *corev1.Secret) (*corev1.Secr
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{key: append([]byte(nil), val...)},
+		Data: map[string][]byte{
+			MirrorAccessTokenKey: []byte(accessToken),
+		},
 	}
-
-	// Preserve any non-auth keys from the source (e.g., a CA bundle alongside
-	// the App PEM). Skip if it's the same key — auth value takes precedence.
-	for k, v := range maps.All(source.Data) {
-		if k == key {
-			continue
-		}
-		dst.Data[k] = append([]byte(nil), v...)
-	}
-
 	return dst, nil
 }

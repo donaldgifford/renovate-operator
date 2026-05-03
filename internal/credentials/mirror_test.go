@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -143,15 +142,7 @@ func TestBuildMirror_GitHubApp(t *testing.T) {
 	t.Parallel()
 
 	run := ghAppRun("")
-	src := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "src-app", Namespace: "renovate-system"},
-		Data: map[string][]byte{
-			"private-key.pem": []byte("-----BEGIN RSA-----\nfake\n-----END RSA-----"),
-			"ca.crt":          []byte("ca-bytes"),
-		},
-	}
-
-	got, err := credentials.BuildMirror(run, src)
+	got, err := credentials.BuildMirror(run, "ghs_minted-installation-token")
 	if err != nil {
 		t.Fatalf("BuildMirror err = %v", err)
 	}
@@ -174,17 +165,11 @@ func TestBuildMirror_GitHubApp(t *testing.T) {
 	if !*got.OwnerReferences[0].Controller {
 		t.Error("owner ref Controller != true")
 	}
-	if string(got.Data["private-key.pem"]) != string(src.Data["private-key.pem"]) {
-		t.Errorf("PEM not copied through")
+	if string(got.Data[credentials.MirrorAccessTokenKey]) != "ghs_minted-installation-token" {
+		t.Errorf("access-token = %q", string(got.Data[credentials.MirrorAccessTokenKey]))
 	}
-	if string(got.Data["ca.crt"]) != "ca-bytes" {
-		t.Error("non-auth key not preserved")
-	}
-
-	// Mutating the source after building must not affect the mirror (deep copy).
-	src.Data["private-key.pem"][0] = 'X'
-	if got.Data["private-key.pem"][0] == 'X' {
-		t.Error("BuildMirror leaked the source byte slice; should DeepCopy")
+	if len(got.Data) != 1 {
+		t.Errorf("mirror should carry only access-token key, got %d keys: %v", len(got.Data), got.Data)
 	}
 }
 
@@ -192,16 +177,12 @@ func TestBuildMirror_Token(t *testing.T) {
 	t.Parallel()
 
 	run := tokenRun("")
-	src := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "src-tok"},
-		Data:       map[string][]byte{"token": []byte("supersecret")},
-	}
-	got, err := credentials.BuildMirror(run, src)
+	got, err := credentials.BuildMirror(run, "supersecret")
 	if err != nil {
 		t.Fatalf("BuildMirror err = %v", err)
 	}
-	if string(got.Data["token"]) != "supersecret" {
-		t.Errorf("token not copied")
+	if string(got.Data[credentials.MirrorAccessTokenKey]) != "supersecret" {
+		t.Errorf("access-token = %q", string(got.Data[credentials.MirrorAccessTokenKey]))
 	}
 }
 
@@ -209,30 +190,18 @@ func TestBuildMirror_Errors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		run     *v1alpha1.RenovateRun
-		src     *corev1.Secret
-		wantErr error
+		name        string
+		run         *v1alpha1.RenovateRun
+		accessToken string
+		wantErr     error
 	}{
-		{"nil-run", nil, &corev1.Secret{}, credentials.ErrNilRun},
-		{"nil-src", ghAppRun(""), nil, nil},
-		{
-			"missing-key",
-			ghAppRun(""),
-			&corev1.Secret{Data: map[string][]byte{"other": []byte("x")}},
-			credentials.ErrSourceMissingKey,
-		},
-		{
-			"empty-key-value",
-			ghAppRun(""),
-			&corev1.Secret{Data: map[string][]byte{"private-key.pem": []byte("")}},
-			credentials.ErrSourceMissingKey,
-		},
+		{"nil-run", nil, "tok", credentials.ErrNilRun},
+		{"empty-token", ghAppRun(""), "", credentials.ErrEmptyAccessToken},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := credentials.BuildMirror(tt.run, tt.src)
+			_, err := credentials.BuildMirror(tt.run, tt.accessToken)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
