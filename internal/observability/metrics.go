@@ -21,6 +21,7 @@ package observability
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -110,7 +111,9 @@ var (
 // registry. Call once at startup; idempotent (re-registering the same
 // collectors panics, so guard accordingly if called more than once).
 func Register() {
-	for _, c := range collectors() {
+	cs := collectors()
+	ctrl.Log.WithName("observability").Info("registering operator metrics", "count", len(cs))
+	for _, c := range cs {
 		metrics.Registry.MustRegister(c)
 	}
 }
