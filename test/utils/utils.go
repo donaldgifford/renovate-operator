@@ -1,3 +1,5 @@
+<<<<<<< HEAD
+=======
 /*
 Copyright 2026.
 
@@ -18,6 +20,7 @@ limitations under the License.
 // test/e2e/. The helpers wrap exec.Command + GinkgoWriter logging so
 // specs can call into kubectl/helm/kind without re-implementing
 // stderr/stdout plumbing in every BeforeSuite.
+>>>>>>> tmp-original-05-05-26-00-36
 package utils
 
 import (
@@ -32,7 +35,7 @@ import (
 )
 
 const (
-	certmanagerVersion = "v1.19.4"
+	certmanagerVersion = "v1.20.2"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 
 	defaultKindBinary  = "kind"

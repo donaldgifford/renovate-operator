@@ -1,6 +1,10 @@
 module github.com/donaldgifford/renovate-operator
 
+<<<<<<< HEAD
+go 1.25.7
+=======
 go 1.26.2
+>>>>>>> tmp-original-05-05-26-00-36
 
 require (
 	code.gitea.io/sdk/gitea v0.24.1
@@ -19,8 +23,12 @@ require (
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
+<<<<<<< HEAD
+	sigs.k8s.io/controller-runtime v0.23.3
+=======
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.23.1
+>>>>>>> tmp-original-05-05-26-00-36
 )
 
 require (
