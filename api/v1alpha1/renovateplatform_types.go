@@ -57,6 +57,12 @@ type RenovatePlatformSpec struct {
 	// +kubebuilder:default="ghcr.io/renovatebot/renovate:latest"
 	// +optional
 	RenovateImage string `json:"renovateImage,omitempty"`
+
+	// LogLevel is the platform-wide default forwarded to workers as the
+	// LOG_LEVEL env var. A Scan-level LogLevel overrides this; both omitted
+	// falls back to "info".
+	// +optional
+	LogLevel *LogLevel `json:"logLevel,omitempty"`
 }
 
 // PlatformAuth is a discriminated union over the supported credential shapes.

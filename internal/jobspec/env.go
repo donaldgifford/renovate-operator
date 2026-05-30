@@ -44,6 +44,20 @@ const (
 	otelServiceName = "renovate-worker"
 )
 
+// resolveLogLevel returns the worker's LOG_LEVEL env value, preferring the
+// Scan override, then the Platform default, then the operator's "info"
+// fallback. Renovate rejects `logLevel` inside RENOVATE_CONFIG, so this env
+// var is the only supported override surface.
+func resolveLogLevel(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScanSpec) string {
+	if scan.LogLevel != nil && *scan.LogLevel != "" {
+		return string(*scan.LogLevel)
+	}
+	if platform.LogLevel != nil && *platform.LogLevel != "" {
+		return string(*platform.LogLevel)
+	}
+	return defaultLogLevel
+}
+
 // renovatePlatformID maps our PlatformType to Renovate's CLI platform string.
 // Renovate v43+ has a first-class "forgejo" platform; passing "gitea" against
 // a real Forgejo instance triggers the "Detected Forgejo instance, please use
@@ -69,7 +83,7 @@ func buildEnv(platform v1alpha1.RenovatePlatformSpec, scan v1alpha1.RenovateScan
 	// 1. Platform-derived
 	out = append(out,
 		corev1.EnvVar{Name: envRenovatePlatform, Value: renovatePlatformID(platform.PlatformType)},
-		corev1.EnvVar{Name: envLogLevel, Value: defaultLogLevel},
+		corev1.EnvVar{Name: envLogLevel, Value: resolveLogLevel(platform, scan)},
 		corev1.EnvVar{Name: envLogFormat, Value: defaultLogFormat},
 	)
 	if platform.BaseURL != "" {

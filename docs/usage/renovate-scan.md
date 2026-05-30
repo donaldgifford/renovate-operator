@@ -154,6 +154,13 @@ Use Platform-level config for cross-Scan settings (host auth, runner-level
 flags). Use Scan-level overrides for per-Scan policy (PR labels, automerge
 strategy, schedule windows).
 
+> **Renovate log level is not a config field.** Renovate rejects `logLevel`
+> inside `renovateConfigOverrides`/`runnerConfig` ("Invalid configuration
+> option: logLevel"). Set `Scan.spec.logLevel` or `Platform.spec.logLevel`
+> instead — the operator forwards it as the `LOG_LEVEL` env var. Scan wins
+> over Platform; both omitted falls back to `info`. Valid values: `trace`,
+> `debug`, `info`, `warn`, `error`, `fatal`.
+
 ```yaml
 # Platform: cross-Scan defaults
 spec:

@@ -234,6 +234,45 @@ func TestBuildWorkerJob_PodSecuritySatisfiesRestricted(t *testing.T) {
 	}
 }
 
+func TestBuildWorkerJob_LogLevelResolution(t *testing.T) {
+	t.Parallel()
+
+	debug := v1alpha1.LogLevelDebug
+	trace := v1alpha1.LogLevelTrace
+
+	tests := []struct {
+		name          string
+		platformLevel *v1alpha1.LogLevel
+		scanLevel     *v1alpha1.LogLevel
+		wantEnvValue  string
+	}{
+		{name: "neither set falls back to info", wantEnvValue: "info"},
+		{name: "platform only sets platform value", platformLevel: &debug, wantEnvValue: "debug"},
+		{name: "scan only sets scan value", scanLevel: &debug, wantEnvValue: "debug"},
+		{name: "scan overrides platform", platformLevel: &debug, scanLevel: &trace, wantEnvValue: "trace"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run := ghRun()
+			run.Spec.PlatformSnapshot.LogLevel = tt.platformLevel
+			run.Spec.ScanSnapshot.LogLevel = tt.scanLevel
+			cm, cred := ghCMAndCred()
+
+			job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
+				Run: run, ShardConfigMap: cm, ActualWorkers: 1, Credential: cred,
+			})
+			if err != nil {
+				t.Fatalf("BuildWorkerJob err = %v", err)
+			}
+			if got := envValue(job.Spec.Template.Spec.Containers[0].Env, "LOG_LEVEL"); got != tt.wantEnvValue {
+				t.Errorf("LOG_LEVEL = %q, want %q", got, tt.wantEnvValue)
+			}
+		})
+	}
+}
+
 func TestBuildWorkerJob_GitHub_EnvOrdering(t *testing.T) {
 	t.Parallel()
 
