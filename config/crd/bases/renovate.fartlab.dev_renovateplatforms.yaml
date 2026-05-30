@@ -138,6 +138,19 @@ spec:
                   https://api.github.com when empty; forgejo has no default and must be
                   set explicitly.
                 type: string
+              logLevel:
+                description: |-
+                  LogLevel is the platform-wide default forwarded to workers as the
+                  LOG_LEVEL env var. A Scan-level LogLevel overrides this; both omitted
+                  falls back to "info".
+                enum:
+                - trace
+                - debug
+                - info
+                - warn
+                - error
+                - fatal
+                type: string
               platformType:
                 description: PlatformType is the Renovate platform identifier.
                 enum:

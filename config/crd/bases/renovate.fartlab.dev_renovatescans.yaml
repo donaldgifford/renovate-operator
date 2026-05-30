@@ -280,6 +280,18 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              logLevel:
+                description: |-
+                  LogLevel overrides the Platform's LogLevel (or the "info" fallback) for
+                  this Scan's worker pods. Forwarded as the LOG_LEVEL env var.
+                enum:
+                - trace
+                - debug
+                - info
+                - warn
+                - error
+                - fatal
+                type: string
               platformRef:
                 description: |-
                   PlatformRef points at the cluster-scoped RenovatePlatform this Scan
