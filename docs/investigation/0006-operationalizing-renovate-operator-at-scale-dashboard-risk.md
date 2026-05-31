@@ -1,13 +1,13 @@
 ---
 id: INV-0006
-title: "Operationalizing Renovate-operator at scale: dashboard, risk classification, and aging queues"
+title: "Operator emits per-repo Run events to a pluggable sink (Redis first)"
 status: Open
 author: Donald Gifford
 created: 2026-05-31
 ---
 <!-- markdownlint-disable-file MD025 MD041 -->
 
-# INV 0006: Operationalizing Renovate-operator at scale: dashboard, risk classification, and aging queues
+# INV 0006: Operator emits per-repo Run events to a pluggable sink (Redis first)
 
 **Status:** Open
 **Author:** Donald Gifford
@@ -19,12 +19,11 @@ created: 2026-05-31
 - [Context](#context)
 - [Approach](#approach)
 - [Findings](#findings)
-  - [Observation 1 — two distinct audiences, often conflated](#observation-1--two-distinct-audiences-often-conflated)
-  - [Observation 2 — risk classification is already a Renovate problem](#observation-2--risk-classification-is-already-a-renovate-problem)
-  - [Observation 3 — the per-repo Dep Dashboard does not aggregate](#observation-3--the-per-repo-dep-dashboard-does-not-aggregate)
-  - [Observation 4 — the operator should emit, not display](#observation-4--the-operator-should-emit-not-display)
-  - [Observation 5 — ownership join is already solved by repo-guardian](#observation-5--ownership-join-is-already-solved-by-repo-guardian)
-  - [Observation 6 — emission surface options](#observation-6--emission-surface-options)
+  - [Observation 1 — the event is "one repo, one Run"](#observation-1--the-event-is-one-repo-one-run)
+  - [Observation 2 — sink is pluggable; Redis is the first impl](#observation-2--sink-is-pluggable-redis-is-the-first-impl)
+  - [Observation 3 — off by default; consumer owns the queue](#observation-3--off-by-default-consumer-owns-the-queue)
+  - [Observation 4 — optional ownership enrichment from two sources](#observation-4--optional-ownership-enrichment-from-two-sources)
+  - [Observation 5 — Prometheus stays platform-ops-only](#observation-5--prometheus-stays-platform-ops-only)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
 - [References](#references)
@@ -32,362 +31,357 @@ created: 2026-05-31
 
 ## Question
 
-At 1K+ repos across multiple GitHub orgs, two operational questions become
-acute:
-
-1. **Risk classification** — how does the fleet decide *automatically*
-   which updates are low-risk (auto-merge / open-now) vs. high-risk
-   (queue for human review / dep-dashboard approval), without per-repo
-   bespoke config?
-2. **Customer-facing fleet visibility** — given that approach, how do
-   *dev teams* (the owners of those 1K repos) see, for *their* repos,
-   how long updates have sat, which PRs need review, which deps are
-   vulnerable? This is distinct from platform-ops visibility ("is the
-   operator healthy") — both audiences need different surfaces.
-
-Renovate itself solves both per repo (`packageRules` for classification,
-the in-repo Dep Dashboard issue for visibility). Neither composes to
-fleet scale without additional plumbing — and the plumbing for the two
-audiences is different.
+At 1K+ repos across multiple GitHub orgs, dev teams want to see what
+Renovate is doing in *their* repos — open PRs, vulnerabilities, dep
+updates, age — without having to scrape N Dep Dashboard issues. How
+do we surface that **without** expanding the operator's scope into
+storage, UI, or ownership resolution?
 
 ## Hypothesis
 
-**(1)** A useful answer does not require new operator-side machinery.
-Renovate's existing `packageRules` + `dependencyDashboardApproval`
-already cover risk classification cleanly when centralized in a shared
-preset (`github>OWNER/renovate-config`). The operator already supports
-this via `RenovatePlatform.spec.presetRepoRef`. The hard part is
-onboarding discipline (every repo extends), not a missing feature.
+The operator's correct role is to **emit one structured event per repo
+per Run** to a pluggable sink. Anything downstream — queue, store,
+UI, per-team views — is the consumer's responsibility. The operator
+stays a producer.
 
-**(2)** The operator's correct role is to **emit structured events**
-about Run outcomes (PRs opened, vulns discovered, deps updated).
-Display is a *consumer* concern, and a consumer already exists in the
-adjacent tooling: `repo-guardian` enforces `catalog-info.yaml` on every
-repo, and `backstage-api` knows how to map a repo → owner/team. A new
-or extended consumer service can join "renovate Run outcomes" to "who
-owns this repo" without the operator ever knowing about teams or
-displaying anything. Crucially, the existing **platform-ops**
-observability (Prometheus / Grafana / OTel / Loki) stays unchanged and
-purpose-built for "is the operator healthy" — it should not be
-contaminated with per-PR/per-repo cardinality.
+Concretely:
+
+- Emission is **off by default**. Opt-in per Platform (or globally
+  via chart values).
+- Emission goes through a Go interface (`EventSink`) with one
+  implementation in v0.2.x: **Redis**. Consumers configure host/port,
+  TLS, auth via chart values.
+- Future backends (NATS, Knative Eventing, Kafka, plain HTTP webhook)
+  slot in behind the same interface without touching reconcilers.
+- The consumer provides and operates the Redis instance/cluster. The
+  operator does not deploy, manage, or own its lifecycle.
+- Optional, *also* off by default: each event carries a small
+  ownership block populated by reading either GitHub repo **custom
+  properties** or the repo's **`catalog-info.yaml`**. If neither is
+  present, the ownership fields are empty strings — never errors,
+  never missing keys.
 
 ## Context
 
-The Phase 9 homelab loop is wrapping up. Two observations motivated
-this investigation:
-
-1. The `dependencyDashboardApproval: true` pattern scales reviewer
-   load *per repo* — but doesn't compose: 1K repos = 1K Dep Dashboards,
-   and there's no aggregation.
-2. The operator already has correctly-scoped platform-ops observability
-   (`internal/observability/metrics.go` + four Grafana dashboards in
-   `contrib/grafana/dashboards/`). That surface is for the platform
-   team. It is not, and should not become, the customer-facing surface
-   for dev teams asking "what's the state of my repos?"
+The Phase 9 homelab loop surfaced two real questions for fleet-scale
+operation. Risk classification turns out to already be Renovate's
+problem (centralized `packageRules` preset + `dependencyDashboardApproval`,
+disciplined via existing onboarding tools) — no operator change needed.
+The remaining gap is **visibility**: a dev team owning 30 repos has
+no aggregated view across them.
 
 **Triggered by:** Phase 9 homelab acceptance loop, conversation
 2026-05-31 around schedule semantics and global-team operationalization.
-Not blocking v0.1.x; informs v0.2.x+ scope.
+Not blocking v0.1.x; informs v0.2.x scope.
 
 ## Approach
 
-This is a thinking spike. No code. Outcomes:
+Thinking spike. No code. Outcomes:
 
-1. Establish the audience separation (platform ops vs. dev teams) so
-   architectural decisions don't conflate them.
-2. Catalog what Renovate already provides for risk classification —
-   establish the baseline so we don't reinvent it.
-3. Catalog what already exists in the adjacent tooling ecosystem
-   (`repo-guardian`, `backstage-api`) so we don't reinvent that either.
-4. Enumerate the *emission* options for the operator (status fields,
-   K8s events, webhooks, NATS/Kafka, OTLP-to-a-second-pipeline) and
-   pick a recommended shape.
-5. Identify the join keys needed so any downstream consumer can
-   correlate operator emissions to PRs, deps, and owners.
+1. Define the event shape — what's *in* one event.
+2. Define the sink interface — what an `EventSink` implementation
+   must do.
+3. Define the configuration surface — how a user opts in and points
+   the operator at their Redis.
+4. Define the optional enrichment surface — what an enriched event
+   looks like, what happens when enrichment is off or sources are
+   missing.
+5. Explicitly state what is **out of scope** for the operator
+   (queue lifecycle, UI, ownership resolution beyond the two simple
+   sources above, per-team views).
 
 ## Findings
 
-### Observation 1 — two distinct audiences, often conflated
+### Observation 1 — the event is "one repo, one Run"
 
-Two audiences want very different surfaces:
+The grain is deliberate: one Renovate Run processes N repos in
+parallel shards; we emit N events, one per repo per Run. Not one
+event per PR, not one event per Run-as-a-whole.
 
-| Audience | Question they ask | Right surface |
-|---|---|---|
-| **Platform team** (owns the operator) | "Is the operator healthy? Are Runs succeeding? Is discovery degrading?" | Prometheus / Grafana / Loki / OTel (what exists today). Low cardinality — `scan`, `platform`, `result`. Never `repo` or `pr_number`. |
-| **Dev teams** (own the repos Renovate runs on) | "How many PRs in my repos are waiting? Are any of my deps vulnerable? How long has this PR sat?" | A customer-facing UI fed by operator emissions joined to ownership data. Per-repo / per-PR / per-dep granularity. Definitively **not** Prometheus. |
+Per-repo grain is what consumers actually want to query against
+("show me all events for `owner/repo` in the last 7 days"), and it
+keeps the payload bounded — a single repo's PR list is small even
+in worst-case repos.
 
-This separation is load-bearing. Pushing customer-facing data into
-Prometheus blows cardinality at 1K+ repos and pollutes the
-platform-ops surface with data nobody on that team cares about.
-Pushing platform-ops data into the customer UI buries dev teams in
-operator internals they shouldn't need to see.
+**Event payload (draft):**
 
-The previous draft of this investigation got this wrong by proposing
-"Shape A: Grafana-only" as a customer-facing solution. That was a
-category error; it's deleted.
-
-### Observation 2 — risk classification is already a Renovate problem
-
-Renovate's `packageRules` is the existing language. The fleet-level
-pattern is a shared preset (`github>OWNER/renovate-config:base` etc.)
-that every repo extends:
-
-```jsonc
+```json
 {
-  "packageRules": [
-    // Patch / pin / digest → automerge if CI passes.
-    {
-      "matchUpdateTypes": ["patch", "pin", "digest"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
+  "specversion": "1.0",
+  "type": "dev.fartlab.renovate.run.repo.completed",
+  "source": "renovate-operator/<scan-namespace>/<scan-name>",
+  "id": "<run-uid>/<repo-owner>/<repo-name>",
+  "time": "2026-05-31T14:22:09Z",
+  "subject": "<repo-owner>/<repo-name>",
+  "data": {
+    "run": {
+      "uid": "<run-uid>",
+      "scan": "<scan-name>",
+      "platform": "<platform-name>",
+      "started_at": "...",
+      "finished_at": "...",
+      "outcome": "succeeded | failed | skipped"
     },
-    // Minor for dev deps → automerge.
-    {
-      "matchUpdateTypes": ["minor"],
-      "matchDepTypes": ["devDependencies"],
-      "automerge": true
+    "repo": {
+      "owner": "donaldgifford",
+      "name": "server-price-tracker",
+      "default_branch": "main",
+      "platform_type": "github"
     },
-    // Major → never automerge, require dashboard approval.
-    {
-      "matchUpdateTypes": ["major"],
-      "dependencyDashboardApproval": true,
-      "labels": ["dependencies", "major"]
+    "ownership": {
+      "owner": "team-platform",
+      "system": "fartlab-infra",
+      "lifecycle": "production",
+      "source": "catalog-info.yaml | custom-properties | unset"
     },
-    // Workflow files → human review (supply-chain risk).
-    {
-      "matchManagers": ["github-actions"],
-      "automerge": false,
-      "labels": ["dependencies", "ci"]
-    },
-    // Security advisories → bypass schedule.
-    {
-      "matchPackagePatterns": ["*"],
-      "vulnerabilityAlerts": {
-        "schedule": ["at any time"],
-        "labels": ["security", "dependencies"]
-      }
+    "outcome": {
+      "prs_opened":   [{"number": 42, "url": "...", "labels": ["dependencies"], "automerge": true}],
+      "prs_updated":  [...],
+      "prs_closed":   [...],
+      "vulnerabilities": [{"advisory_id": "GHSA-...", "severity": "high", "package": "lodash"}],
+      "dependencies_updated": [{"package": "lodash", "from": "4.17.20", "to": "4.17.21", "manager": "npm"}]
     }
-  ]
+  }
 }
 ```
 
-This composes cleanly across the fleet **iff** every repo extends the
-preset. The operator already supports it via `presetRepoRef` (auto-
-prepends into `extends` on every Run; `internal/jobspec/env.go:176-179`).
-The hard work is *onboarding* every repo to the preset — which is
-exactly what `repo-guardian` already enforces for `catalog-info.yaml`.
-A natural extension of `repo-guardian`'s policy set would be "every
-repo's `renovate.json` must `extends` the org preset" — solving the
-discipline gap with existing tooling.
+A [CloudEvents v1.0](https://cloudevents.io/) envelope is the
+default because it interops with everything (Knative, NATS, Kafka
+connectors, generic webhook receivers) for free and makes the
+graduation path to other backends frictionless.
 
-Two gaps that remain at fleet scale, neither addressable by the operator
-alone:
+### Observation 2 — sink is pluggable; Redis is the first impl
 
-- **Per-team policy.** Platform team's "low risk" ≠ payments team's.
-  Today handled by per-repo `extends` (`:base + :payments` vs `:base + :platform`).
-  No native team-policy abstraction in Renovate.
-- **Why-did-this-automerge audit trail.** `packageRules` resolution is
-  opaque — output is just the PR's flags. To answer "why did this
-  merge?" you'd need to capture the resolved config at Run time.
+Define a thin interface in `internal/eventsink/`:
 
-### Observation 3 — the per-repo Dep Dashboard does not aggregate
+```go
+type Event struct {
+    SpecVersion string
+    Type        string
+    Source      string
+    ID          string
+    Time        time.Time
+    Subject     string
+    Data        EventData
+}
 
-The Dep Dashboard is a single GitHub issue per repo. Useful per-repo;
-opaque at fleet scale. The questions dev teams want answered cross
-repos:
+type Sink interface {
+    Publish(ctx context.Context, ev Event) error
+    Close(ctx context.Context) error
+}
+```
 
-- "How many open security-labeled PRs in *my* repos are >14 days old?"
-- "Which of *my* repos have non-empty Awaiting-Approval queues older
-  than 30 days?"
-- "What's the median time-to-merge for patch automerges in *my* repos?"
+Reconcilers depend only on `Sink`. The Run reconciler, at the
+terminal transition for each repo, builds the `Event` and calls
+`Publish`. Failures from `Publish` are logged + surfaced as a Run
+condition but **do not fail the Run** — emission is observational,
+not load-bearing on Renovate having actually done its work.
 
-These join across N repos and need an ownership filter. None are
-answerable from N independent markdown issues.
+The first implementation: `internal/eventsink/redis/`.
 
-### Observation 4 — the operator should emit, not display
+- Use [`github.com/redis/go-redis/v9`](https://pkg.go.dev/github.com/redis/go-redis/v9).
+- Publish via `XADD` to a configurable stream key (default
+  `renovate.events`). Streams (not pub/sub) so consumers can be
+  offline and catch up; consumer-group semantics are the consumer's
+  call.
+- Optional sentinel/cluster client based on chart values.
+- Reconnect with backoff; per-event publish has a tight timeout
+  (default 5s) so a wedged Redis doesn't slow Run reconciliation.
 
-The architectural cut that falls out of (1)+(3):
+Future impls slot in (`internal/eventsink/nats/`,
+`internal/eventsink/webhook/`, `internal/eventsink/knative/`)
+without reconciler changes. Each chosen by chart-values
+`eventSink.type`.
 
-- **Operator's job:** be a well-behaved *producer*. After every Run,
-  emit a structured event listing: which repos were processed, which
-  PRs were opened/updated/closed, which vulns were surfaced, which
-  deps were updated, with timestamps and labels.
-- **Consumer's job:** subscribe to those events, normalize/store them,
-  join to ownership data, render a UI. The operator never knows about
-  teams, ownership, or UIs. The consumer never knows about reconciler
-  loops, K8s resources, or shard layouts.
+### Observation 3 — off by default; consumer owns the queue
 
-This separation:
-- Keeps the operator small and focused (its job is to *run Renovate
-  reliably*, not to be a dependency-management portal).
-- Lets the consumer evolve independently — start as an extension of
-  `backstage-api`, graduate to a dedicated service if/when the surface
-  outgrows that, all without changing the operator.
-- Trivially supports multiple consumers (`backstage-api`, a Slack
-  digest bot, a compliance audit log, etc.) all subscribing to the
-  same event stream.
+The Helm chart adds (sketch):
 
-### Observation 5 — ownership join is already solved by repo-guardian
+```yaml
+# values.yaml
+eventSink:
+  enabled: false               # opt-in
+  type: redis                  # "redis" only in v0.2.x
+  redis:
+    addr: "redis.example.svc.cluster.local:6379"
+    db: 0
+    stream: "renovate.events"
+    maxLen: 100000             # XADD MAXLEN ~ ; 0 = unbounded
+    tls:
+      enabled: false
+      caSecretRef: { name: "", key: "" }
+    auth:
+      secretRef: { name: "", key: "" }   # contains "password" or full URL
+  enrichment:
+    enabled: false             # opt-in
+    sources:                   # ordered; first hit wins
+      - customProperties
+      - catalogInfo
+```
 
-`repo-guardian` enforces that every repo carries a `catalog-info.yaml`
-declaring its owner. `backstage-api` exposes lookups by component or
-owner-group. The implications for this investigation:
+When `eventSink.enabled=false` (default), the reconciler wires a
+no-op sink and the code path is dead — no Redis dependency, no
+connection attempts, no log noise.
 
-- The "who owns this repo?" question is **already a solved problem**
-  in this ecosystem. We don't need to invent a CODEOWNERS scraper or
-  a YAML mapping in the operator namespace.
-- The customer-facing consumer service can call `backstage-api` (or
-  hit the Backstage catalog directly) to translate
-  `repo → owner-group → user list` for filtering and display.
-- The operator emits the *repo* identifier; the consumer joins to
-  ownership. The operator stays ownership-agnostic.
+The operator does **not**:
 
-Optionally, the consumer might not even be a new service. If
-`backstage-api` already has a generic "events about entities" surface,
-the operator's emissions could plug into it directly and the UI lives
-in Backstage. That's a sequencing question (does
-`backstage-api` already do this, or does it need extension?) — out of
-scope for this investigation but worth checking before scoping the
-consumer.
+- Deploy Redis. Users bring their own (managed service, self-hosted,
+  cluster from another chart).
+- Manage retention beyond the configurable `MAXLEN` on `XADD`. Long-
+  term retention is a consumer concern.
+- Provide consumer groups, dead-letter handling, or replay. Consumers
+  implement their own consumer-group reads against the stream.
 
-### Observation 6 — emission surface options
+This is the architectural cut that keeps the operator small.
 
-The operator needs an emission surface for the consumer to subscribe
-to. Five plausible options:
+### Observation 4 — optional ownership enrichment from two sources
 
-| Option | Pros | Cons |
-|---|---|---|
-| **`RenovateRun.status` enrichment** — add `openedPRs`, `updatedPRs`, `vulnerabilities`, `dependenciesUpdated` to the existing status. Consumer watches the K8s API. | Persistent. Already-watched resource. K8s API is the natural integration point. No new endpoints to operate. | K8s API watch is the consumer's problem to scale across N runs. Status fields are bounded by etcd object size (~1.5 MiB per Run). |
-| **K8s events on the Run** — emit a structured Event per Run terminal transition listing the same data. | Native Kubernetes pattern. Consumers familiar with `kubectl get events`. | Events are ephemeral (1h default retention). Consumer must be running continuously. Event size limited. |
-| **Webhook (POST to configurable URL)** — emit on terminal transition. | Simple. Decoupled. Consumer can be anything that accepts HTTP. | Delivery is best-effort — need retry/DLQ on the operator side or a retry-tolerant consumer. Signature verification needed for security. |
-| **Cloud-event to a stream (NATS / Kafka / Redis Stream)** — durable pub/sub. | Robust, scales to many consumers, durable, replay-friendly. | Requires the broker to be operational infrastructure. Heaviest dependency. |
-| **OTLP to a second pipeline** — emit "outcome" events as OTel logs/spans to a dedicated endpoint separate from the ops pipeline. | Reuses OTel infrastructure if it already exists. Strongly-typed via OTel semantic conventions. | Conflates "monitoring" and "domain events" semantically. OTel consumers (e.g., Tempo, Grafana) aren't built for "give me all the open PRs in my repos." |
+To make events useful to per-team consumers without forcing the
+consumer to do another round of platform-API lookups, the operator
+*can* enrich each event with a small ownership block. Two sources,
+both optional, configurable order:
 
-**Recommended combination:** status enrichment (option 1) **plus**
-webhook (option 3) as opt-in.
+1. **GitHub repo custom properties** —
+   [`GET /repos/{owner}/{repo}/properties/values`](https://docs.github.com/en/rest/repos/custom-properties).
+   Available since GitHub Enterprise rolled out repo-level custom
+   properties; org admins define keys like `owner`, `system`,
+   `lifecycle`. Operator reads at discovery time (or once at first
+   touch and caches per Run). Forgejo equivalent: not surfaced in
+   v0.2.x — Forgejo doesn't have an analogous concept yet.
+2. **`catalog-info.yaml`** in the repo's default branch —
+   Backstage's de-facto component descriptor. Operator does a
+   single `GET contents/catalog-info.yaml`, parses the YAML,
+   pulls `spec.owner`, `spec.system`, `spec.lifecycle`. If the
+   file doesn't exist (404) or doesn't parse, fall back to next
+   source or empty.
 
-- Status enrichment gives every consumer (including ad-hoc
-  `kubectl`/`yq` scripts) a queryable surface with zero new infra.
-- Webhook lets the canonical consumer (`backstage-api` or a new
-  service) subscribe to the *event* shape and not have to poll the
-  K8s API.
-- Streams (NATS/Kafka) are an obvious graduation path if/when multiple
-  long-lived consumers exist, but we should not require a broker just
-  to ship v0.2.
+**If both sources are off or both return nothing, the ownership
+block's string fields are `""` — never absent keys, never errors.**
+This keeps consumer parsing trivial: no missing-key branches, no
+"is this enrichment on?" checks.
+
+Source attribution is part of the payload (`ownership.source`) so
+the consumer can debug "why is this empty" without re-running
+discovery.
+
+Cost note: enrichment adds 1 or 2 extra platform API calls per repo
+per Run. For GitHub App auth with 4500 req/hr budget at 1K repos,
+that's still well under the ceiling for nightly cadence (1K-2K
+extra reqs vs. 4500/hr * 24 = 108K available). For high-frequency
+schedules or instances near rate-limit pressure, enrichment is off
+by default precisely because it's not free.
+
+### Observation 5 — Prometheus stays platform-ops-only
+
+The existing Prometheus/Grafana/OTel/Loki surface is for the
+**platform team** running the operator. It is *not* for the dev
+teams owning the repos. This investigation does not change that:
+
+- No per-repo / per-PR collectors get added to
+  `internal/observability/metrics.go`. The cardinality alone (1K
+  repos × N labels) is disqualifying, even before the audience
+  argument.
+- Customer-facing data flows through the event sink, not Prometheus.
+- The current operator metrics (RunsTotal, DiscoveryErrorsTotal,
+  ActiveRuns, etc.) stay scoped to `{scan, platform, result}` and
+  remain the platform team's debugging surface.
+
+This separation is load-bearing. Capture it explicitly in
+DESIGN-0001's observability section before v0.2.x lands so future
+contributors don't conflate the two.
 
 ## Conclusion
 
-**Answer:**
+**Answer:** The operator should ship one structured CloudEvents-shaped
+event per repo per Run, through a pluggable `Sink` interface,
+defaulting to disabled. The first implementation is Redis streams.
+The consumer provides Redis, reads the stream, joins to whatever
+ownership/UI system makes sense for them. The operator does not
+operate the queue, does not provide a UI, and does not resolve
+ownership beyond two simple opt-in reads (GitHub custom properties,
+`catalog-info.yaml`).
 
-**(1)** Risk classification is solved by centralizing `packageRules`
-in a preset and using `repo-guardian` to enforce that every repo
-extends it. No operator-side feature needed beyond what's already
-shipped (`presetRepoRef`).
-
-**(2)** Customer-facing fleet visibility is a real gap. The operator's
-correct role is to emit structured Run-outcome events, *not* to
-display anything. A consumer system (likely an extension of
-`backstage-api`) joins those emissions to ownership data already
-maintained by `repo-guardian` enforcement of `catalog-info.yaml`, and
-exposes per-owner views. The platform-ops observability stack
-(Prometheus / Grafana / OTel / Loki) is correctly scoped today and
-stays unchanged — adding per-PR data there would blow cardinality
-and conflate audiences.
+Risk classification is solved separately by centralized `packageRules`
+in a preset and operational discipline ensuring every repo extends
+it — no operator change needed.
 
 ## Recommendation
 
-**v0.2.x operator scope** (this repo):
+**v0.2.x scope** (this repo):
 
-1. **`RenovateRun.status` enrichment**. Add typed fields:
-   ```go
-   OpenedPRs    []PRRef          // repo, number, url, label, automerge
-   UpdatedPRs   []PRRef
-   ClosedPRs    []PRRef          // superseded / no-longer-needed
-   Vulnerabilities []VulnRef     // repo, advisory id, severity, dep
-   DependenciesUpdated []DepRef  // repo, package, from, to, manager
-   ```
-   Populated by the Run reconciler from worker output (parse the
-   already-structured JSON logs, or have the worker write a result
-   file we read back). Bounded — a Run that opens 1000 PRs is itself
-   a problem; we'd cap and surface the overflow as a condition.
-2. **Optional webhook sink**. New `Platform.spec.eventSink` config:
-   ```yaml
-   eventSink:
-     type: webhook
-     url: https://backstage-api.internal/renovate/events
-     secretRef: { name: webhook-signing-key, key: secret }
-   ```
-   Operator POSTs a signed JSON envelope per terminal Run. Best-effort
-   delivery with bounded retries; failures surface as a Run condition.
-   Don't block the reconcile loop on delivery.
-3. **Don't** add per-PR / per-repo collectors to the Prometheus
-   surface. The audience cut from Observation 1 is the load-bearing
-   rationale; capture it explicitly in DESIGN-0001's observability
-   section so the next contributor doesn't undo it.
+1. **`internal/eventsink/` package** with `Sink` interface +
+   `Event` types + no-op sink. Reconcilers depend on `Sink`.
+2. **`internal/eventsink/redis/` implementation** using
+   `redis/go-redis/v9`. `XADD` to a configurable stream, MAXLEN
+   bounded by config, reconnect with backoff, per-publish timeout.
+3. **`RenovateRun` terminal-transition emission**. For each repo
+   processed by a Run, build an `Event`, call `Publish`. Failures
+   log + Run condition, do **not** fail the Run.
+4. **Optional ownership enrichment**:
+   - `internal/enrichment/customprops/` (GitHub only) calls
+     `/repos/{owner}/{repo}/properties/values`.
+   - `internal/enrichment/catalog/` does a `GET contents/catalog-info.yaml`
+     and parses the standard Backstage fields.
+   - Both return `Ownership{owner, system, lifecycle, source}`;
+     empty strings on miss.
+   - Wired in by Discovery (with results cached on the Run snapshot
+     so reconciliation doesn't re-fetch).
+5. **Chart values surface** under `eventSink` and `eventSink.enrichment`
+   as sketched above. Default both `enabled: false`.
+6. **Do not** add per-PR / per-repo collectors to the Prometheus
+   surface. Capture the audience split in DESIGN-0001 so it survives
+   future contributors.
 
-**Consumer scope** (out of this repo, plausibly an extension of
-`backstage-api`):
+**Out of scope for the operator** (forever, not just v0.2.x):
 
-1. Receive operator webhooks. Normalize and store
-   `(run_id, repo, owner_from_catalog_info, pr_number, label,
-   opened_at, merged_at, ...)`.
-2. Join `repo → owner` via existing `backstage-api` ownership lookup.
-3. Periodically reconcile with platform APIs (`/pulls`, `/issues`,
-   `/dependabot/alerts`) for state Renovate doesn't emit — e.g., a
-   PR Renovate opened a week ago but a reviewer just merged manually
-   without a subsequent Run. Reconciliation closes the loop.
-4. Expose per-owner views. UI lives wherever Backstage / the
-   consumer surfaces them.
+- Redis (or any sink backend) deployment / lifecycle / monitoring.
+- Consumer-group management, dead-letter queues, replay logic.
+- Any UI, dashboard, or per-team view.
+- Resolving `owner-group → user-list` (that's whoever consumes the
+  stream, not the operator).
+- Persisting events beyond what the configured sink does itself.
 
-**Onboarding** (operational, not code):
+### Open questions to resolve during implementation
 
-- Extend `repo-guardian`'s policy set to require `renovate.json`
-  exists and extends the org preset. Bonus: have it warn on `extends`
-  lists that don't include the base preset.
-
-### Open questions to resolve before scoping
-
-- **Does `backstage-api` already have an "events about entities"
-  ingress?** If yes, the operator's webhook target IS `backstage-api`
-  and the consumer work is "extend the schema." If no, the consumer
-  is more substantial.
-- **What's the right webhook payload format?** CloudEvents v1.0
-  envelope around a typed payload would interoperate well with the
-  rest of the ecosystem and leave a graduation path to a stream.
-- **How does the operator know which webhook to call?**
-  Per-Platform? Per-Scan? Cluster-wide via env? Per-Platform is the
-  least surprising — different Platforms might belong to different
-  orgs with different ownership systems.
-- **Failure modes for webhook delivery.** Bounded retries + DLQ
-  surfaced as a Run condition. Don't introduce an outbox table; if
-  the receiver is down for hours, surface it loudly via the existing
-  Ready condition and let the consumer's reconcile-with-platform-API
-  loop catch up the missed events.
-- **Backward compatibility for existing manual users.** Status
-  enrichment is additive (no breaking change). Webhook is opt-in
-  (no-op when not configured). Both should be invisible to current
-  v0.1.x users on upgrade.
+- **What's the worker's contribution to the event payload?** Two
+  options: (a) parse the worker's structured JSON logs in the
+  reconciler (no worker-side change, brittle to log-shape changes),
+  or (b) have the worker write a small `result.json` to a known
+  path and the reconciler reads it (cleaner, requires worker
+  cooperation). Lean toward (b).
+- **What's the timeout/retry policy for `Publish`?** Tight (5s per
+  publish, no retry, log + condition on failure) keeps the
+  reconciler responsive. Consumers are expected to be reliable; if
+  Redis is wedged, the operator should not pile up.
+- **Per-Platform sink vs. cluster-wide?** Cluster-wide (single chart
+  values block) is simpler and matches the typical "one operator,
+  one event stream" pattern. Per-Platform is more flexible but adds
+  surface area to the CRD with no clear v0.2.x demand. Start
+  cluster-wide; revisit if a real multi-tenant case appears.
+- **CloudEvents transport binding for Redis?** Use
+  [CloudEvents Go SDK](https://pkg.go.dev/github.com/cloudevents/sdk-go/v2)'s
+  JSON event format as the payload; the Redis stream entry stores
+  it as a single field (`ce`) plus mirror a couple of fields
+  (`subject`, `time`) at the top level for quick filtering.
+- **Backward compat?** Both `eventSink.enabled` and
+  `eventSink.enrichment.enabled` are off by default, so v0.1.x users
+  see zero change on upgrade. Reconciler with no-op sink is a
+  no-op.
 
 ## References
 
-- DESIGN-0001 § "Future architecture: state DB" — *now reframed*: that
-  section anticipated operator-side state for scheduler reasons; this
-  investigation argues the *visibility* state lives in the consumer,
-  not the operator. Both can coexist.
-- ADR-0008 — `defaultScan` chart-shipped default; relevant for "every
-  repo extends the preset" onboarding alongside `repo-guardian`.
-- `internal/observability/metrics.go` — current Prometheus collectors;
-  this investigation argues they're correctly scoped and should not
-  grow per-repo cardinality.
-- `contrib/grafana/dashboards/` — existing four dashboards; *not*
-  the right place for customer-facing fleet view.
-- `repo-guardian` (external tooling) — enforces `catalog-info.yaml`
-  per repo; ownership-truth-of-record.
-- `backstage-api` (external tooling) — owner/component lookup;
-  candidate consumer for operator emissions.
-- Renovate docs: `packageRules`, `dependencyDashboardApproval`,
-  `vulnerabilityAlerts`, `prBodyTemplate`.
-- PR #18 — surfaced the operationalization gap during the doc work
-  for the two-`requireConfig` collision and the schedule-vs-no-schedule
+- DESIGN-0001 § "Future architecture: state DB" — *now reframed*:
+  visibility state lives in the consumer of the event stream, not
+  inside the operator.
+- CloudEvents v1.0 spec — payload shape.
+- Redis Streams — `XADD`, `XREAD`, consumer groups (consumer-side,
+  not operator concern).
+- GitHub REST: `GET /repos/{owner}/{repo}/properties/values` —
+  custom-properties source for ownership enrichment.
+- Backstage `catalog-info.yaml` — alternate ownership source; widely
+  adopted, parses with stdlib YAML.
+- `internal/observability/metrics.go` — current Prometheus
+  collectors; stay scoped to platform-ops, no per-repo growth.
+- PR #18 — surfaced the operationalization gap during doc work for
+  the two-`requireConfig` collision and the schedule-vs-no-schedule
   conversation that led to this spike.
