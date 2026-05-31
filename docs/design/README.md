@@ -33,5 +33,7 @@ docz create design "Your Design Title"
 | ID | Title | Status | Date | Author | Link |
 |----|-------|--------|------|--------|------|
 | DESIGN-0001 | renovate-operator v0.1.0 | In Review | 2026-04-26 | donaldgifford | [0001-renovate-operator-v0-1-0.md](0001-renovate-operator-v0-1-0.md) |
-| DESIGN-0002 | renovate-operator v0.2.0 | Draft | 2026-05-31 | Donald Gifford | [0002-renovate-operator-v020.md](0002-renovate-operator-v020.md) |
+| DESIGN-0002 | Landscape: candidates for renovate-operator v0.2.x | Approved | 2026-05-31 | Donald Gifford | [0002-renovate-operator-v020.md](0002-renovate-operator-v020.md) |
+| DESIGN-0003 | EventSink for renovate-operator v0.2.0 | Draft | 2026-05-31 | Donald Gifford | [0003-eventsink-for-renovate-operator-v020.md](0003-eventsink-for-renovate-operator-v020.md) |
+| DESIGN-0004 | Operator HTTP API, consumer, datastore, UI, and webhook receiver for renovate-operator v0.3.0 | Draft | 2026-05-31 | Donald Gifford | [0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md](0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md) |
 <!-- END DOCZ AUTO-GENERATED -->

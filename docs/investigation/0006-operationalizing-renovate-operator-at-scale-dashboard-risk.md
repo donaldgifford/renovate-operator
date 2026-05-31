@@ -26,6 +26,7 @@ created: 2026-05-31
   - [Observation 5 — Prometheus stays platform-ops-only, but grows to cover the new contract](#observation-5--prometheus-stays-platform-ops-only-but-grows-to-cover-the-new-contract)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
+  - [Open questions to resolve during implementation](#open-questions-to-resolve-during-implementation)
 - [References](#references)
 <!--toc:end-->
 

@@ -1,315 +1,217 @@
 ---
 id: DESIGN-0002
-title: "renovate-operator v0.2.0"
-status: Draft
+title: "Landscape: candidates for renovate-operator v0.2.x"
+status: Approved
 author: Donald Gifford
 created: 2026-05-31
 ---
 <!-- markdownlint-disable-file MD025 MD041 -->
 
-# DESIGN 0002: renovate-operator v0.2.0
+# DESIGN 0002: Landscape — candidates for renovate-operator v0.2.x
 
-**Status:** Draft
+**Status:** Approved (decisions captured below; implementation in DESIGN-0003 / DESIGN-0004)
 **Author:** Donald Gifford
 **Date:** 2026-05-31
 
 <!--toc:start-->
 - [Overview](#overview)
-- [Goals and Non-Goals](#goals-and-non-goals)
-  - [Goals](#goals)
-  - [Non-Goals](#non-goals)
-- [Background](#background)
-- [Detailed Design](#detailed-design)
-  - [1. Event sink (INV-0006)](#1-event-sink-inv-0006)
-  - [2. Webhook receiver (RFC-0001 Phase 2)](#2-webhook-receiver-rfc-0001-phase-2)
-- [API / Interface Changes](#api--interface-changes)
-- [Data Model](#data-model)
-- [Testing Strategy](#testing-strategy)
-- [Migration / Rollout Plan](#migration--rollout-plan)
-- [Open Questions](#open-questions)
-- [Deferred to v0.3.x or later](#deferred-to-v03x-or-later)
+- [Why this doc exists](#why-this-doc-exists)
+- [Candidates considered](#candidates-considered)
+  - [1. EventSink](#1-eventsink)
+  - [2. Internal HTTP API + consumer + datastore + UI + webhook receiver](#2-internal-http-api--consumer--datastore--ui--webhook-receiver)
+  - [3. GitHub App token refresh for long Runs](#3-github-app-token-refresh-for-long-runs)
+  - [4. Credential-source abstraction (Vault / ESO / cloud SM)](#4-credential-source-abstraction-vault--eso--cloud-sm)
+  - [5. Real Replace concurrency-policy semantics](#5-real-replace-concurrency-policy-semantics)
+  - [6. Per-Scan credential isolation via per-Run RBAC](#6-per-scan-credential-isolation-via-per-run-rbac)
+  - [7. Smaller items](#7-smaller-items)
+- [Decision](#decision)
+- [Why the split](#why-the-split)
 - [References](#references)
 <!--toc:end-->
 
 ## Overview
 
-Scope bracket for the second release of `renovate-operator`. v0.2.0
-turns the operator from "schedules Runs and emits ops metrics" into
-"schedules Runs, *responds to events*, and tells downstream systems
-what happened." Two load-bearing additions, both opt-in:
+Planning artifact that surveys every candidate for the second
+release line of `renovate-operator` and assigns each to a release
+(v0.2.0, v0.3.0) or to the deferred backlog. This doc does *not*
+specify implementation; once a candidate is assigned to a release,
+its detailed design lives in its own DESIGN doc.
 
-- A pluggable **EventSink** (Redis Streams first) that emits one
-  structured event per repo per Run, with optional ownership
-  enrichment and matching platform-ops Prometheus collectors.
-- A **webhook receiver** Deployment that turns inbound platform
-  `push` events into one-shot Runs.
+**Outcome:**
 
-Everything else previously considered for v0.2.x — token refresh,
-credential-source abstraction, real `Replace` semantics, per-Scan
-credential isolation, smaller items — is captured in
-[Deferred to v0.3.x or later](#deferred-to-v03x-or-later) and
-remains tracked in its source doc (INV-0003, ADR-0004, etc.).
+- **v0.2.0** — EventSink only. Detailed design: [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md).
+- **v0.3.0** — Internal HTTP API + consumer + datastore + UI + webhook receiver, all opt-in. Detailed design: [DESIGN-0004](0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md).
+- **Deferred** (no release assignment yet) — token refresh, credential-source abstraction, real `Replace` semantics, per-Scan RBAC, smaller items.
 
-This document is the planning artifact, not yet an implementation
-plan. Each section ends with the open decisions the implementation
-needs to resolve before any code lands; IMPL-0002 will sequence the
-work once the shapes here are agreed.
+## Why this doc exists
 
-## Goals and Non-Goals
+By the end of the v0.1.x homelab loop, the v0.2.x "scope" had
+accreted into a list of seven mostly-unrelated workstreams pulled
+from different source docs (RFC-0001 Phase 2, INV-0003, ADR-0004,
+DESIGN-0001 §multi-tenancy, INV-0006, ADR-0007, IMPL-0001 notes).
+Treating them as one release would have produced a feature-grab
+release with no coherent theme — exactly what RFC-0001's phased
+plan was trying to avoid.
 
-### Goals
+This doc does the work of:
 
-- **EventSink** package with `Sink` interface + Redis Streams
-  implementation, off by default ([INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md)).
-- **Ownership enrichment** from GitHub repo custom properties or
-  `catalog-info.yaml`, also off by default, empty-string fallback.
-- **Sink-level Prometheus collectors** (`up`, `published_total`,
-  `publish_duration_seconds`, `dropped_total`) — operator's
-  delivery contract, not consumer data.
-- **Webhook receiver** as a separate Deployment in the chart, off
-  by default ([RFC-0001 §Phase 2](../rfc/0001-build-kubebuilder-renovate-operator.md)).
-  Inbound GitHub/Forgejo `push` events trigger a one-shot Run
-  against a single repo.
-- Backward compatible: every new feature is opt-in. A v0.1.x
-  install on upgrade sees zero behavior change.
+1. Enumerating every candidate that was on the table at planning time.
+2. Stating what each *is* and what release it belongs in.
+3. Recording the rationale for the v0.2.x / v0.3.x split so future
+   contributors can re-litigate it if their context changes.
 
-### Non-Goals
+It is then sealed (`Approved`). New ideas don't get retrofitted
+into DESIGN-0002 — they get their own DESIGN doc and reference
+this one if a re-scoping is warranted.
 
-- **GitHub App token refresh for long Runs.** Tracked in
-  [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md).
-  Workaround stays "tighter shards" until v0.3.x.
-- **Credential-source abstraction** (`*FromVault` / `*FromESO`).
-  Users continue to shim Vault/ESO → K8s Secret externally.
-- **Real `Replace` concurrency-policy semantics.** Still aliases
-  `Forbid`; tracked in
-  [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md).
-- **Per-Scan credential isolation via per-Run RBAC.** DESIGN-0001
-  §multi-tenancy guidance unchanged.
-- Additional platforms (GitLab, Bitbucket, Azure DevOps) — Phase 3 /
-  v0.3.0.
-- Conversion webhooks. Stay on `v1alpha1`; no API stability promises
-  until v1beta1+.
-- Built-in UI. Customer-facing visibility is downstream-of-EventSink
-  by design (INV-0006 Observation 1 + 4).
-- Per-team policy primitives in the CRD. Renovate's `packageRules`
-  + shared presets remain the policy surface.
-- Multi-cluster fan-out / mid-run worker rescaling — still
-  ArgoCD-layer concerns.
-- Operator-owned state DB. Anticipated direction in DESIGN-0001
-  §Future architecture; not v0.2.x scope.
+## Candidates considered
 
-## Background
+### 1. EventSink
 
-v0.1.0 published 2026-05-01. v0.1.1 → v0.1.3 fixed Phase-9 homelab
-acceptance bugs (metrics-auth RBAC, PodSecurity worker pods, App
-auth, discovery scope, schedule first-fire, `RENOVATE_PLATFORM`
-mapping, discovery bool serialization, log-level override). After
-that loop closed, two adjacent gaps emerged:
+Operator emits one structured CloudEvents-shaped event per repo
+per Run to a pluggable sink. Redis Streams is the first impl.
+Optional ownership enrichment from GitHub repo custom properties
+or `catalog-info.yaml`. Sink-level Prometheus collectors cover
+the "I published" contract.
 
-1. **Operationalization** — dev teams owning 1K+ repos need a
-   per-team view of what Renovate is doing. The operator's existing
-   Prometheus surface is for platform-ops; pushing per-repo data
-   there blows cardinality. The right shape is to emit structured
-   events and let a consumer system join them to ownership data and
-   render whatever UI fits. INV-0006 captured this with a
-   pluggable-sink, Redis-first design and an explicit "operator
-   emits, does not display" cut.
+**Source:** [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md).
+**Assigned to:** v0.2.0. Detailed design: [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md).
 
-2. **On-demand runs** — the RFC-0001 Phase 2 commitment for webhook
-   receivers is overdue. Same release is the natural home.
+### 2. Internal HTTP API + consumer + datastore + UI + webhook receiver
 
-Operational hardening items (token refresh, credential sources,
-real `Replace`, per-Scan RBAC) deferred to a later release to keep
-v0.2.0's surface coherent: it's the "operator now talks to the
-outside world" release, not the "operator hardens its existing
-surfaces" release. Those land in v0.3.x.
+The whole "customer-facing surface" stack:
 
-## Detailed Design
+- **Internal HTTP API** (Go, shipped with the operator chart, off
+  by default). Reads/writes CRDs on behalf of the external router.
+  Consumes the EventSink. Provides an OpenAPI spec as the contract
+  for the external router. Stays K8s-API-aware so it can do things
+  `kubectl` can do (suspend a Scan, force a Run) without the
+  external UI needing a kubeconfig.
+- **Datastore** (probably Postgres). Persists EventSink events
+  long enough to serve queries like "all PRs in my repos older
+  than 30 days." The operator does not own this state today; v0.3.x
+  is when it does, gated on the API being enabled.
+- **External UI / API router** (bun + hono + React, separate
+  repo or `web/` directory). Handles auth (OIDC), TLS, public
+  exposure, and serves the React UI. Talks to the internal API
+  via the generated OpenAPI client.
+- **Webhook receiver**. Originally a v0.2.0 candidate (RFC-0001
+  Phase 2). Bundled here because all four pieces share a theme:
+  "external interactions with the operator." A webhook receiver
+  shipping without the consumer/UI would emit events nothing
+  ingests except the EventSink stream, which is fine but uninspiring.
 
-### 1. Event sink (INV-0006)
+**Source:** this conversation (2026-05-31), extends RFC-0001 Phase 2
+and INV-0006.
+**Assigned to:** v0.3.0. Detailed design: [DESIGN-0004](0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md).
 
-Full proposal lives in [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md).
-Summary of what lands in v0.2.0:
+### 3. GitHub App token refresh for long Runs
 
-- `internal/eventsink/` package with `Sink` interface, typed
-  `Event` (CloudEvents v1.0 envelope), no-op default sink.
-- `internal/eventsink/redis/` impl using `redis/go-redis/v9`,
-  `XADD` to a configurable stream key, MAXLEN bounded by config,
-  reconnect with backoff, per-publish timeout (default 5s).
-- Run reconciler calls `Publish` once per repo at the Run's
-  terminal transition. Failures **do not** fail the Run; they
-  surface as a Run condition and an emitted Prom counter
-  (`renovate_eventsink_dropped_total`).
-- Optional ownership enrichment:
-  - `internal/enrichment/customprops/` — GitHub only, reads
-    `/repos/{owner}/{repo}/properties/values`.
-  - `internal/enrichment/catalog/` — `GET contents/catalog-info.yaml`,
-    parse `spec.owner`/`spec.system`/`spec.lifecycle`.
-  - Both off by default. Empty-string fields when both sources
-    miss; `ownership.source` attributes which (or `"unset"`).
-- Sink-level Prometheus collectors (`up`, `published_total`,
-  `publish_duration_seconds`, `dropped_total`) wired through the
-  `Sink` wrapper so every future impl gets them automatically.
-- Chart values surface:
+GitHub App installation tokens have a ~1h TTL on github.com. Runs
+longer than ~50 min hit 401s mid-scan. Two viable approaches:
+tighter shards (operator-side, no extra components) or a
+token-refresh sidecar/helper (worker-side, generic).
 
-```yaml
-eventSink:
-  enabled: false
-  type: redis
-  redis:
-    addr: ""
-    db: 0
-    stream: "renovate.events"
-    maxLen: 100000
-    tls: { enabled: false, caSecretRef: { name: "", key: "" } }
-    auth: { secretRef: { name: "", key: "" } }
-  enrichment:
-    enabled: false
-    sources: [customProperties, catalogInfo]
-```
+**Source:** [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md).
+**Assigned to:** deferred. Workaround ("tighter shards" sizing
+guidance, documented in [RenovateScan §workers](../usage/renovate-scan.md))
+remains acceptable. Real fix is meaningful infra work that should
+get its own design pass when long-Runs become a felt problem.
 
-**Open for impl:** worker `result.json` vs. log-parse for the event
-payload source of truth; cluster-wide vs. per-Platform sink config;
-CloudEvents transport binding shape on the stream entry.
+### 4. Credential-source abstraction (Vault / ESO / cloud SM)
 
-### 2. Webhook receiver (RFC-0001 Phase 2)
+Today `RenovatePlatform.spec.auth.{githubApp,token}.secretRef`
+points at a K8s Secret. Vault / ESO / AWS-SM / GCP-SM users have
+to shim externally. First-class `*FromVault`, `*FromESO` etc.
+fields would remove that shim.
 
-Inbound platform webhooks trigger out-of-band `RenovateRun`s.
-Shape:
+**Source:** CLAUDE.md (INV-0003 deferred enhancement).
+**Assigned to:** deferred. Users shim today; demand will come from
+production users who'll bring concrete shape requirements.
 
-- New `cmd/webhook-receiver/main.go` binary; new `dist/chart/templates/webhook/`
-  Deployment + Service + Ingress (off by default; `webhook.enabled: false`).
-- Endpoints:
-  - `POST /github/{platform-name}` — verifies HMAC-SHA256 against
-    the App's webhook secret; acts on `push`, `pull_request`,
-    `installation_repositories`.
-  - `POST /forgejo/{platform-name}` — verifies via token header;
-    acts on `push`.
-- On a relevant event, creates a one-shot `RenovateRun` in the
-  Platform's default namespace (configurable per Platform) with
-  a `spec.target.repos: [owner/name]` field and no `parentScanRef`.
-  The Run reconciler treats it as a normal Run with a discovery
-  step that's already complete.
-- New `RenovateRun.spec.target.repos []string` field (no
-  validator; trusted from operator-internal callers only).
-  Reconciler skips discovery when this list is set.
-- Webhook receiver does **not** itself execute Renovate — it only
-  files the Run and lets the Run reconciler do its job. Keeps the
-  fan-in surface trivially correct.
-- Webhook-triggered Runs flow through the same EventSink as
-  scheduled Runs; consumers see the same event shape regardless
-  of trigger source.
+### 5. Real `Replace` concurrency-policy semantics
 
-**Open for impl:** rate-limit / dedupe of bursty webhook traffic
-(GitHub will fire `push` per branch); minting the `RenovateRun` in
-the right namespace (Platform-scoped vs. webhook-config-scoped);
-whether `installation_repositories` should kick a *discovery* Run
-or do something cleverer.
+`Scan.spec.concurrencyPolicy: Replace` is accepted today but
+silently aliases `Forbid`. Real semantics need careful Job
+cascade-deletion + grace-window handling + `Cancelled` condition
+writeback.
 
-## API / Interface Changes
+**Source:** [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md).
+**Assigned to:** deferred. Documented limitation; nothing breaks.
 
-CRD additions, all additive:
+### 6. Per-Scan credential isolation via per-Run RBAC
 
-- `RenovateRun.spec.target.repos []string` (optional; set only
-  by the webhook receiver, not by humans).
+Worker pods in Scan A's namespace can read Scan B's mirrored
+Secret if cluster RBAC allows. The chart-shipped ServiceAccount
+should be scoped via a per-Run Role granting `get` on only the
+relevant Secret.
 
-Helm chart additions, all gated to default-off:
+**Source:** [DESIGN-0001 §multi-tenancy](0001-renovate-operator-v0-1-0.md).
+**Assigned to:** deferred. Multi-tenant pressure isn't here yet;
+current per-Run Secret naming gives reasonable hygiene.
 
-- `eventSink.*` block.
-- `webhook.*` block (Deployment, Service, optional Ingress).
+### 7. Smaller items
 
-Binary additions:
+- **Search API discovery optimization** ([IMPL-0001 Phase 3 note](../impl/0001-renovate-operator-v010-implementation.md)) — use GitHub's code-search API for the `requireConfig` probe. Performance, not features.
+- **Future-date renderer for `Next Run` printer column** ([INV-0001](../investigation/0001-render-renovatescan-next-run-printer-column-accurately-for.md)) — cosmetic; column shows absolute RFC3339 today.
+- **CI metrics-coverage validator for Grafana panels** ([ADR-0007](../adr/0007-observability-stack.md)) — catches dashboard rot.
 
-- `cmd/webhook-receiver/` (new Deployment image; same
-  container-image build pipeline, multi-binary layout).
+**Source:** various.
+**Assigned to:** deferred. None are release-defining.
 
-## Data Model
+## Decision
 
-No new persistent storage. The operator stays Kubernetes-API-only
-for state.
-
-The event sink writes to a Redis Stream the operator does not
-own — its shape is part of the public contract (CloudEvents v1.0
-envelope around the typed payload in INV-0006), but its storage
-is the consumer's concern. Schema versioning lives in the
-CloudEvents `dataschema` field for forward compatibility.
-
-## Testing Strategy
-
-- **Unit (`*_test.go`)** for the new pure packages: `eventsink`
-  (Sink interface + no-op + redis with miniredis), `enrichment`
-  (customprops + catalog parsers), webhook signature verification.
-- **Controller (envtest)** for the webhook receiver → Run creation
-  flow and the Run reconciler's "discovery short-circuited by
-  spec.target.repos" branch.
-- **e2e (kind)** for the end-to-end happy path of each new
-  feature: webhook fires → Run completes; event lands in Redis
-  (miniredis container in kind).
-- **No new fixtures for Vault/ESO branches** (out of v0.2.x scope).
-- Coverage gate stays at ≥80% per package per IMPL-0001.
-
-## Migration / Rollout Plan
-
-v0.2.0 is fully additive. Upgrade path from any v0.1.x install:
-
-1. `helm upgrade renovate-operator oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.2.0`.
-2. No CRD-breaking changes; existing Platforms/Scans/Runs unaffected.
-3. `helm diff` will show new gated templates (webhook Deployment,
-   eventSink config); none render until opted in.
-4. Existing K8s-Secret credential sources keep working unchanged.
-5. No behavioral changes for any v0.1.x feature. `concurrencyPolicy: Replace`
-   continues to alias `Forbid` (deferred to v0.3.x).
-
-Release sequence mirrors v0.1.0: feature-complete on `main` →
-RC tags for homelab loop → v0.2.0 GA tag → docker bake + cosign
-+ helm OCI via existing release.yml pipeline.
-
-## Open Questions
-
-Cross-cutting, beyond the per-section "Open for impl" notes:
-
-- **IMPL-0002 sequencing.** EventSink and webhook receiver are
-  largely independent; either can ship first. Webhook receiver is
-  the older commitment (RFC-0001 Phase 2); EventSink has more
-  upstream design work in INV-0006. Likely interleave them by
-  package boundary (eventsink package → webhook package → wiring →
-  e2e) rather than serializing.
-- **Webhook + EventSink overlap.** A webhook-triggered Run still
-  emits to the EventSink. Are there event types we need beyond
-  "Run for repo X completed"? E.g., "webhook received but no Run
-  fired because of dedupe."
-- **OTel for the new components.** The webhook receiver and the
-  event sink wrapper both warrant their own tracing spans. Reuse
-  the existing `internal/observability/tracing.go` setup or
-  separate exporter config?
-- **Worker pod's contribution to event payload.** Confirm the
-  `result.json` approach (over log-parsing) before INV-0006
-  implementation locks in. Requires Renovate-side cooperation or
-  a wrapper script.
-
-## Deferred to v0.3.x or later
-
-Captured here so the v0.2.x scope cut is transparent and the
-deferred items don't fall off the radar. Each remains tracked in
-its source doc; v0.3.x DESIGN doc will pick them up.
-
-| Item | Source | Why deferred |
+| Candidate | Release | Detailed design |
 |---|---|---|
-| **GitHub App token refresh** for Runs > ~50 min | [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md) | Workaround ("tighter shards" sizing guidance) is acceptable while the EventSink + webhook surface lands. Real fix is a sidecar — a meaningful infra investment best done with its own design pass. |
-| **Credential-source abstraction** — `*FromVault`, `*FromESO`, etc. on `RenovatePlatform.spec.auth.*` | CLAUDE.md (INV-0003 deferred enhancement) | Users shim externally today. Demand will come from production users; homelab path doesn't need it yet. |
-| **Real `Replace` concurrency-policy semantics** | [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md) | Cancellation needs careful grace-window handling (Job propagation, worker pod termination, Cancelled condition writeback). Not blocking — `Forbid` aliasing is documented. |
-| **Per-Scan credential isolation** via per-Run RBAC | [DESIGN-0001 §multi-tenancy](0001-renovate-operator-v0-1-0.md) | Multi-tenant pressure isn't here yet; current per-Run Secret naming already gives reasonable hygiene. Real RBAC isolation lands when a real tenant appears. |
-| **Search API discovery optimization** | [IMPL-0001 Phase 3 note](../impl/0001-renovate-operator-v010-implementation.md) | Performance optimization, not a feature gap. |
-| **Future-date renderer for `Next Run` printer column** | [INV-0001](../investigation/0001-render-renovatescan-next-run-printer-column-accurately-for.md) | Cosmetic. Today shows absolute RFC3339 — readable, just not relative. |
-| **CI metrics-coverage validator for Grafana panels** | [ADR-0007](../adr/0007-observability-stack.md) | Catches dashboard rot. Worth doing; not a release-defining feature. |
+| EventSink | **v0.2.0** | [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md) |
+| Internal HTTP API + consumer + datastore + UI + webhook receiver | **v0.3.0** | [DESIGN-0004](0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md) |
+| GitHub App token refresh for long Runs | Deferred | (in [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)) |
+| Credential-source abstraction | Deferred | (in CLAUDE.md, INV-0003) |
+| Real `Replace` semantics | Deferred | (in [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md)) |
+| Per-Scan credential isolation | Deferred | (in [DESIGN-0001 §multi-tenancy](0001-renovate-operator-v0-1-0.md)) |
+| Search API discovery / future-date renderer / Grafana coverage CI | Deferred | (in source docs) |
+
+## Why the split
+
+**v0.2.0 = EventSink only.** Coherent theme: the operator
+acquires a *publication contract* — it tells the outside world
+what it did. Implementation is bounded (one Go package, one Redis
+client, a Sink wrapper for metrics, an enrichment helper). Lands
+the foundation that v0.3.0's consumer needs.
+
+**v0.3.0 = the full customer-facing stack.** Coherent theme: the
+operator gains an *interactive interface* — humans can see what
+it's doing and tell it what to do, through a UI. This pulls
+together:
+
+- The HTTP API + datastore + UI as the visible part.
+- The webhook receiver as the "outside world tells the operator
+  to do something" path (RFC-0001 Phase 2's original intent),
+  symmetric with the HTTP API's "human tells the operator to do
+  something" path.
+- The EventSink consumer as the data-feed for the UI.
+
+Originally the webhook receiver was a v0.2.0 candidate (RFC-0001
+Phase 2). The decision to move it: a webhook receiver shipping
+without a consumer to act on the resulting events is just
+"another way to make a Run happen," which `kubectl` already does.
+Bundled with the UI it becomes "external systems and humans, both
+through real interfaces." Worth the wait.
+
+**Deferred items** all share one property: they're hardening or
+ergonomics work that doesn't need a feature theme to ship. They
+land opportunistically — either as point releases (v0.2.1, v0.3.1)
+or rolled into a future v0.4.x "hardening" release if enough of
+them accumulate.
 
 ## References
 
-- [RFC-0001](../rfc/0001-build-kubebuilder-renovate-operator.md) §Phase 2 —
-  webhook commitment.
-- [DESIGN-0001](0001-renovate-operator-v0-1-0.md) — v0.1.0 design
-  baseline.
+- [RFC-0001 §Phase 2](../rfc/0001-build-kubebuilder-renovate-operator.md) —
+  original webhook commitment.
+- [DESIGN-0001](0001-renovate-operator-v0-1-0.md) — v0.1.0 baseline.
+- [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md) — v0.2.0 EventSink.
+- [DESIGN-0004](0004-operator-http-api-consumer-datastore-ui-and-webhook-receiver.md) — v0.3.0 customer-facing stack.
 - [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md) —
   EventSink design.
-- [IMPL-0001](../impl/0001-renovate-operator-v010-implementation.md) —
-  v0.1.0 implementation log.
+- [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md) —
+  source of the token-refresh and credential-source-abstraction deferrals.
