@@ -108,6 +108,15 @@ spec:
 | `skipForks`     | `true`  | Drops forks.                                                                                                                                                           |
 | `skipArchived`  | `true`  | Drops archived repos.                                                                                                                                                  |
 
+> **Two fields named `requireConfig` — they are not the same.**
+>
+> | Field                                                                              | Type     | Where it runs        | What it does                                                                                                                                       |
+> | ---------------------------------------------------------------------------------- | -------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | `spec.discovery.requireConfig`                                                     | `bool`   | **Operator**         | Pre-filters discovery. The operator probes each repo for `renovate.json*` via the platform API and drops repos without one **before** dispatching. |
+> | `runnerConfig.requireConfig` / `renovateConfigOverrides.requireConfig` (Renovate)  | `string` (`"required"` \| `"optional"` \| `"ignored"`) | **Renovate worker**  | Tells the Renovate CLI how to react to a repo with no config. `"required"` still clones the repo, then exits early.                                |
+>
+> Setting `discovery.requireConfig: false` while leaving Renovate's `requireConfig: required` means every discovered repo gets cloned and immediately rejected — wasteful and noisy in logs. Default for both is "the safe option": operator filters, Renovate uses its built-in default. Don't disable `discovery.requireConfig` unless you're intentionally onboarding repos without configs.
+
 ### Common discovery shapes
 
 **Single repo, explicit filter (smallest blast radius):**

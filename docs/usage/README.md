@@ -34,6 +34,21 @@ _why_ and the design) and [`test/manual/README.md`](../../test/manual/README.md)
   Scan; `Started` / `Discovered` / `Succeeded` / `Failed` on Run. The Run's
   `phase` field is a derived cursor, useful for printer columns / quick filters.
 
+## Gotchas worth knowing up front
+
+- **`requireConfig` exists in two places.** `Scan.spec.discovery.requireConfig`
+  (operator, `bool`) pre-filters repos before dispatch; the Renovate option
+  `requireConfig` (string, in `runnerConfig` / `renovateConfigOverrides`)
+  controls the worker's behavior after clone. They overlap by name but do
+  different things — see the Discovery section of
+  [RenovateScan](renovate-scan.md#discovery).
+- **Worker log level is its own spec field, not a Renovate config option.**
+  Use `Scan.spec.logLevel` (or `Platform.spec.logLevel`) — Renovate rejects
+  `logLevel` inside `renovateConfigOverrides`.
+- **GitHub preset files must be `.json`, not `.json5`.** Renovate's GitHub
+  preset fetcher only ever requests `.json` paths. JSON5 is supported only
+  for `local>...` presets.
+
 ## Where to start
 
 - **First-time install on a homelab cluster:** [Installation](installation.md),
