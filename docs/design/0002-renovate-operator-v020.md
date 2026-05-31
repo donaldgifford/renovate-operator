@@ -22,16 +22,12 @@ created: 2026-05-31
 - [Detailed Design](#detailed-design)
   - [1. Event sink (INV-0006)](#1-event-sink-inv-0006)
   - [2. Webhook receiver (RFC-0001 Phase 2)](#2-webhook-receiver-rfc-0001-phase-2)
-  - [3. Token lifecycle for long Runs (INV-0003 follow-up)](#3-token-lifecycle-for-long-runs-inv-0003-follow-up)
-  - [4. Credential-source abstraction](#4-credential-source-abstraction)
-  - [5. `Replace` concurrency policy](#5-replace-concurrency-policy)
-  - [6. Per-Scan credential isolation](#6-per-scan-credential-isolation)
-  - [7. Smaller items](#7-smaller-items)
 - [API / Interface Changes](#api--interface-changes)
 - [Data Model](#data-model)
 - [Testing Strategy](#testing-strategy)
 - [Migration / Rollout Plan](#migration--rollout-plan)
 - [Open Questions](#open-questions)
+- [Deferred to v0.3.x or later](#deferred-to-v03x-or-later)
 - [References](#references)
 <!--toc:end-->
 
@@ -40,12 +36,19 @@ created: 2026-05-31
 Scope bracket for the second release of `renovate-operator`. v0.2.0
 turns the operator from "schedules Runs and emits ops metrics" into
 "schedules Runs, *responds to events*, and tells downstream systems
-what happened." Three load-bearing additions: a pluggable
-**EventSink** for per-repo Run outcomes (Redis first), a **webhook
-receiver** for out-of-band on-demand Runs, and the **operational
-hardening** the homelab loop turned up — token refresh for long
-Runs, alternative credential sources, real `Replace` semantics, and
-per-Scan credential isolation.
+what happened." Two load-bearing additions, both opt-in:
+
+- A pluggable **EventSink** (Redis Streams first) that emits one
+  structured event per repo per Run, with optional ownership
+  enrichment and matching platform-ops Prometheus collectors.
+- A **webhook receiver** Deployment that turns inbound platform
+  `push` events into one-shot Runs.
+
+Everything else previously considered for v0.2.x — token refresh,
+credential-source abstraction, real `Replace` semantics, per-Scan
+credential isolation, smaller items — is captured in
+[Deferred to v0.3.x or later](#deferred-to-v03x-or-later) and
+remains tracked in its source doc (INV-0003, ADR-0004, etc.).
 
 This document is the planning artifact, not yet an implementation
 plan. Each section ends with the open decisions the implementation
@@ -67,21 +70,21 @@ work once the shapes here are agreed.
   by default ([RFC-0001 §Phase 2](../rfc/0001-build-kubebuilder-renovate-operator.md)).
   Inbound GitHub/Forgejo `push` events trigger a one-shot Run
   against a single repo.
-- **GitHub App installation-token refresh** for Runs that exceed
-  the ~50-minute safe window ([INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md)).
-- **Pluggable credential sources** for `RenovatePlatform.spec.auth.*`
-  beyond raw K8s Secrets — at minimum Vault and ESO (External
-  Secrets Operator) reference flows.
-- **Real `Replace` concurrency policy** semantics. Today it aliases
-  `Forbid` ([ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md)).
-- **Per-Scan credential isolation** path documented and (where
-  feasible) wired so a Scan's worker pods cannot read another
-  Scan's mirrored Secret ([DESIGN-0001 §multi-tenancy](0001-renovate-operator-v0-1-0.md)).
 - Backward compatible: every new feature is opt-in. A v0.1.x
   install on upgrade sees zero behavior change.
 
 ### Non-Goals
 
+- **GitHub App token refresh for long Runs.** Tracked in
+  [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md).
+  Workaround stays "tighter shards" until v0.3.x.
+- **Credential-source abstraction** (`*FromVault` / `*FromESO`).
+  Users continue to shim Vault/ESO → K8s Secret externally.
+- **Real `Replace` concurrency-policy semantics.** Still aliases
+  `Forbid`; tracked in
+  [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md).
+- **Per-Scan credential isolation via per-Run RBAC.** DESIGN-0001
+  §multi-tenancy guidance unchanged.
 - Additional platforms (GitLab, Bitbucket, Azure DevOps) — Phase 3 /
   v0.3.0.
 - Conversion webhooks. Stay on `v1alpha1`; no API stability promises
@@ -112,16 +115,14 @@ that loop closed, two adjacent gaps emerged:
    pluggable-sink, Redis-first design and an explicit "operator
    emits, does not display" cut.
 
-2. **Operational hardening** — several v0.1.x design choices need
-   real follow-through: GitHub App tokens expire at ~1h, the
-   credential surface is K8s-Secret-only (Vault/ESO users have to
-   shim externally), `Replace` aliases `Forbid`, and multi-tenant
-   credential isolation is documented but not enforced.
+2. **On-demand runs** — the RFC-0001 Phase 2 commitment for webhook
+   receivers is overdue. Same release is the natural home.
 
-Plus the long-standing RFC-0001 Phase 2 commitment: a webhook
-receiver for on-demand Runs.
-
-This design pulls all of that into a single release scope.
+Operational hardening items (token refresh, credential sources,
+real `Replace`, per-Scan RBAC) deferred to a later release to keep
+v0.2.0's surface coherent: it's the "operator now talks to the
+outside world" release, not the "operator hardens its existing
+surfaces" release. Those land in v0.3.x.
 
 ## Detailed Design
 
@@ -195,6 +196,9 @@ Shape:
 - Webhook receiver does **not** itself execute Renovate — it only
   files the Run and lets the Run reconciler do its job. Keeps the
   fan-in surface trivially correct.
+- Webhook-triggered Runs flow through the same EventSink as
+  scheduled Runs; consumers see the same event shape regardless
+  of trigger source.
 
 **Open for impl:** rate-limit / dedupe of bursty webhook traffic
 (GitHub will fire `push` per branch); minting the `RenovateRun` in
@@ -202,173 +206,17 @@ the right namespace (Platform-scoped vs. webhook-config-scoped);
 whether `installation_repositories` should kick a *discovery* Run
 or do something cleverer.
 
-### 3. Token lifecycle for long Runs (INV-0003 follow-up)
-
-GitHub App installation tokens have a ~1h TTL on github.com. The
-operator mints once at Run start (per INV-0003 fix); Runs longer
-than ~50 min hit 401s mid-scan. Two viable approaches:
-
-**A. Tighter shards (operator-side, no extra components).** Cap
-shard wall-time by lowering `reposPerWorker` so each worker pod
-completes well under 50 min. Document the math in the Scan
-sizing table. Trivial — works today, but fragile against repos
-with slow networks or huge histories.
-
-**B. Token-refresh helper (worker-side, generic).** A tiny
-sidecar or in-image helper that the operator launches alongside
-the Renovate container. It holds the App PEM, mints fresh
-installation tokens on a ticker, and writes them to a shared
-emptyDir volume; Renovate reads `RENOVATE_TOKEN_FILE` (which it
-already supports) and re-reads on token expiry.
-
-**Lean toward B**: it's a one-shot infra investment that
-permanently removes the wall-time ceiling. A is a workaround.
-Cost: another container in the worker pod, +PEM mount to one
-more place, more moving parts to test.
-
-**Open for impl:** sidecar vs. init-container wake-loop; whether
-to fold the PEM mount into the existing credential-mount path or
-add a second; how to detect token-staleness from Renovate's
-output and surface it as a Run condition.
-
-### 4. Credential-source abstraction
-
-Today `RenovatePlatform.spec.auth.{githubApp,token}.secretRef`
-points at a K8s Secret. Vault and ESO users have to shim
-externally (sync to a K8s Secret, then point the operator). v0.2.x
-adds first-class alternatives:
-
-```yaml
-# Today (v0.1.x):
-auth:
-  githubApp:
-    appID: 123
-    installationID: 456
-    privateKeyRef: { name: gh-app-key, key: private-key.pem }
-
-# v0.2.x — adds alternatives:
-auth:
-  githubApp:
-    appID: 123
-    installationID: 456
-    privateKeyFromVault: { mount: kv, path: renovate/gh-app, key: pem }
-
-auth:
-  githubApp:
-    appID: 123
-    installationID: 456
-    privateKeyFromESO:
-      externalSecretRef: { name: gh-app-pem }   # ESO-managed
-```
-
-CRD validation enforces exactly one source per credential field
-(CEL `oneOf` rule). The reconciler dispatches to a
-`CredentialSource` resolver per type; the existing K8s-Secret
-resolver becomes one impl of many.
-
-Initial set: K8s Secret (existing), **Vault KV** (HashiCorp Vault
-via approle or kube-auth), **ESO reference** (External Secrets
-Operator — operator watches the ESO `ExternalSecret`'s synced K8s
-Secret rather than the source). AWS Secrets Manager / GCP Secret
-Manager left for v0.3.x.
-
-**Open for impl:** Vault auth method (approle vs.
-kubernetes-service-account JWT); whether ESO mode just wraps the
-existing Secret resolver with an `ExternalSecret`-aware status
-gate, or does something more direct; rotation semantics for
-Vault-sourced creds (in-flight Runs use the snapshotted token;
-next Run picks up the new value).
-
-### 5. `Replace` concurrency policy
-
-`Scan.spec.concurrencyPolicy: Replace` is accepted today but
-behaves as `Forbid` ([ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md)).
-Real semantics:
-
-- If a non-terminal owned Run exists at fire time, the Scan
-  reconciler:
-  1. Sends `kubectl delete` to the active Run (cascade-deletes
-     Job + ConfigMap + mirrored Secret via owner refs).
-  2. Waits up to a bounded grace (default 30s) for terminal
-     condition or active count to hit 0.
-  3. Creates the new Run.
-- On grace timeout, the Scan logs a warning and skips the new
-  fire-time (same as `Forbid`). Surfaces as a Scan condition.
-
-**Open for impl:** does "delete" propagate to a half-finished
-Job's running pods cleanly (the Job controller respects
-`PropagationPolicy=Foreground`); should the active Run get a
-chance to write a terminal "Cancelled" reason before deletion;
-new test cases in the envtest suite.
-
-### 6. Per-Scan credential isolation
-
-v0.1.x mirrors the operator-namespace Secret into the Scan
-namespace verbatim. Worker pods in Scan A's namespace can read
-Scan B's mirrored Secret if RBAC allows. DESIGN-0001 §multi-tenancy
-acknowledged this and deferred to v0.2+.
-
-Two layers in v0.2.x:
-
-- **Per-Run Secret names** (already done in v0.1.x — the
-  mirrored Secret is named after the Run UID). Deletion follows
-  Run GC.
-- **Namespace-scoped RBAC for worker pods**: the chart-shipped
-  `RenovateScan` ServiceAccount gets a Role granting `get` on
-  just the per-Run Secret name pattern, not `secrets/*`. Workers
-  run as that ServiceAccount. Cross-Scan read is blocked at the
-  RBAC layer even when Runs cohabit a namespace.
-
-**Open for impl:** whether to generate the Role/RoleBinding per
-Run (cleanest) or per Scan (cheaper); how this interacts with
-deployments that have ExternalSecret already managing the worker
-SA token; making sure `kubectl logs` from operators-with-cluster-RBAC
-still works.
-
-### 7. Smaller items
-
-- **Search API discovery optimization** ([IMPL-0001 Phase 3
-  note](../impl/0001-renovate-operator-v010-implementation.md)).
-  Use GitHub's code-search API for the `requireConfig` probe
-  when available — one API call to find all repos with
-  `renovate.json` vs. N calls. Forgejo equivalent doesn't exist;
-  unaffected.
-- **Future-date renderer for `Next Run` printer column**
-  ([INV-0001](../investigation/0001-render-renovatescan-next-run-printer-column-accurately-for.md)).
-  Today the column is `type=string` (fixed) showing the absolute
-  RFC3339 timestamp. v0.2.x can ship a kubectl-friendly relative
-  form once we decide whether to do it in the controller (status
-  field) or via additional printer columns.
-- **CI metrics-coverage Grafana validator**
-  ([ADR-0007](../adr/0007-observability-stack.md)). Extend the
-  existing `make metrics-coverage-lint` (which checks chart-side
-  PrometheusRule + `contrib/`) to also assert every metric
-  referenced in `contrib/grafana/dashboards/*.json` is defined in
-  `internal/observability/metrics.go`. Catches dashboard rot.
-
 ## API / Interface Changes
 
 CRD additions, all additive:
 
-- `RenovatePlatform.spec.auth.githubApp.privateKeyFromVault`
-  (struct, optional).
-- `RenovatePlatform.spec.auth.githubApp.privateKeyFromESO`
-  (struct, optional).
-- `RenovatePlatform.spec.auth.token.tokenFromVault`,
-  `tokenFromESO` (struct, optional).
-- CEL `oneOf` validation across the three sources per credential
-  field.
 - `RenovateRun.spec.target.repos []string` (optional; set only
   by the webhook receiver, not by humans).
-- `RenovateScan.status.conditions` gains `ReplaceTimedOut`
-  reason on `Replace` policy grace exhaustion.
 
 Helm chart additions, all gated to default-off:
 
 - `eventSink.*` block.
 - `webhook.*` block (Deployment, Service, optional Ingress).
-- `defaultScan.workerServiceAccount` and `workerRBAC` blocks for
-  per-Scan credential isolation knobs.
 
 Binary additions:
 
@@ -390,17 +238,14 @@ CloudEvents `dataschema` field for forward compatibility.
 
 - **Unit (`*_test.go`)** for the new pure packages: `eventsink`
   (Sink interface + no-op + redis with miniredis), `enrichment`
-  (customprops + catalog parsers).
-- **Controller (envtest)** for `Replace` policy semantics, webhook
-  receiver → Run creation flow, credential-source resolution
-  branching, per-Run RBAC creation.
+  (customprops + catalog parsers), webhook signature verification.
+- **Controller (envtest)** for the webhook receiver → Run creation
+  flow and the Run reconciler's "discovery short-circuited by
+  spec.target.repos" branch.
 - **e2e (kind)** for the end-to-end happy path of each new
   feature: webhook fires → Run completes; event lands in Redis
-  (miniredis container in kind); per-Run Secret RBAC denies
-  cross-Scan reads.
-- **No new fixtures for the Vault/ESO branches** in v0.2.x — gate
-  those on the existing platform-client test pattern with httptest
-  fakes. Real backends covered by `test/manual/README.md` updates.
+  (miniredis container in kind).
+- **No new fixtures for Vault/ESO branches** (out of v0.2.x scope).
 - Coverage gate stays at ≥80% per package per IMPL-0001.
 
 ## Migration / Rollout Plan
@@ -410,14 +255,10 @@ v0.2.0 is fully additive. Upgrade path from any v0.1.x install:
 1. `helm upgrade renovate-operator oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.2.0`.
 2. No CRD-breaking changes; existing Platforms/Scans/Runs unaffected.
 3. `helm diff` will show new gated templates (webhook Deployment,
-   eventSink config, worker RBAC); none render until opted in.
-4. Existing K8s-Secret credential sources keep working — the new
-   `*FromVault` / `*FromESO` fields are alternatives, not
-   replacements.
-5. `concurrencyPolicy: Replace` users will see actual replace
-   semantics, not the silent `Forbid` fallback. If anyone is
-   relying on the existing (buggy) behavior, the upgrade notes
-   need to call this out as the one *behavioral* change.
+   eventSink config); none render until opted in.
+4. Existing K8s-Secret credential sources keep working unchanged.
+5. No behavioral changes for any v0.1.x feature. `concurrencyPolicy: Replace`
+   continues to alias `Forbid` (deferred to v0.3.x).
 
 Release sequence mirrors v0.1.0: feature-complete on `main` →
 RC tags for homelab loop → v0.2.0 GA tag → docker bake + cosign
@@ -427,10 +268,12 @@ RC tags for homelab loop → v0.2.0 GA tag → docker bake + cosign
 
 Cross-cutting, beyond the per-section "Open for impl" notes:
 
-- **IMPL-0002 sequencing.** Which of (1)–(6) above ships first?
-  Webhook + EventSink are the visible features; the hardening
-  items (3)–(6) are debt-reducing. Suggest landing the hardening
-  first so the visible features get built on a cleaner foundation.
+- **IMPL-0002 sequencing.** EventSink and webhook receiver are
+  largely independent; either can ship first. Webhook receiver is
+  the older commitment (RFC-0001 Phase 2); EventSink has more
+  upstream design work in INV-0006. Likely interleave them by
+  package boundary (eventsink package → webhook package → wiring →
+  e2e) rather than serializing.
 - **Webhook + EventSink overlap.** A webhook-triggered Run still
   emits to the EventSink. Are there event types we need beyond
   "Run for repo X completed"? E.g., "webhook received but no Run
@@ -443,30 +286,30 @@ Cross-cutting, beyond the per-section "Open for impl" notes:
   `result.json` approach (over log-parsing) before INV-0006
   implementation locks in. Requires Renovate-side cooperation or
   a wrapper script.
-- **`Replace` semantics around credential rotation.** If a Scan
-  is configured with `Replace`, an in-flight Run gets killed
-  when the next fire-time arrives even if it just minted a fresh
-  installation token. Probably fine, but worth documenting.
+
+## Deferred to v0.3.x or later
+
+Captured here so the v0.2.x scope cut is transparent and the
+deferred items don't fall off the radar. Each remains tracked in
+its source doc; v0.3.x DESIGN doc will pick them up.
+
+| Item | Source | Why deferred |
+|---|---|---|
+| **GitHub App token refresh** for Runs > ~50 min | [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md) | Workaround ("tighter shards" sizing guidance) is acceptable while the EventSink + webhook surface lands. Real fix is a sidecar — a meaningful infra investment best done with its own design pass. |
+| **Credential-source abstraction** — `*FromVault`, `*FromESO`, etc. on `RenovatePlatform.spec.auth.*` | CLAUDE.md (INV-0003 deferred enhancement) | Users shim externally today. Demand will come from production users; homelab path doesn't need it yet. |
+| **Real `Replace` concurrency-policy semantics** | [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md) | Cancellation needs careful grace-window handling (Job propagation, worker pod termination, Cancelled condition writeback). Not blocking — `Forbid` aliasing is documented. |
+| **Per-Scan credential isolation** via per-Run RBAC | [DESIGN-0001 §multi-tenancy](0001-renovate-operator-v0-1-0.md) | Multi-tenant pressure isn't here yet; current per-Run Secret naming already gives reasonable hygiene. Real RBAC isolation lands when a real tenant appears. |
+| **Search API discovery optimization** | [IMPL-0001 Phase 3 note](../impl/0001-renovate-operator-v010-implementation.md) | Performance optimization, not a feature gap. |
+| **Future-date renderer for `Next Run` printer column** | [INV-0001](../investigation/0001-render-renovatescan-next-run-printer-column-accurately-for.md) | Cosmetic. Today shows absolute RFC3339 — readable, just not relative. |
+| **CI metrics-coverage validator for Grafana panels** | [ADR-0007](../adr/0007-observability-stack.md) | Catches dashboard rot. Worth doing; not a release-defining feature. |
 
 ## References
 
 - [RFC-0001](../rfc/0001-build-kubebuilder-renovate-operator.md) §Phase 2 —
   webhook commitment.
 - [DESIGN-0001](0001-renovate-operator-v0-1-0.md) — v0.1.0 design
-  baseline; §multi-tenancy and §Future architecture: state DB are
-  load-bearing for v0.2.x scope.
-- [ADR-0004](../adr/0004-use-conditions-and-run-children-for-status.md) —
-  `Replace`-aliases-`Forbid` baseline; v0.2.x makes `Replace`
-  real.
-- [ADR-0007](../adr/0007-observability-stack.md) — observability
-  baseline; v0.2.x extends with sink-level collectors and
-  considers Grafana-coverage CI.
-- [INV-0001](../investigation/0001-render-renovatescan-next-run-printer-column-accurately-for.md) —
-  future-date rendering deferred to v0.2.x.
-- [INV-0003](../investigation/0003-renovate-v43-github-app-auth-requires-autodiscover-not.md) —
-  GitHub App auth fix; v0.2.x token-refresh follow-up.
+  baseline.
 - [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md) —
   EventSink design.
 - [IMPL-0001](../impl/0001-renovate-operator-v010-implementation.md) —
-  v0.1.0 implementation log; Phase 3.4 deprecation/search-API
-  note carried forward.
+  v0.1.0 implementation log.
