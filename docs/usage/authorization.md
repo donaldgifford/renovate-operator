@@ -31,6 +31,7 @@ Apps → New GitHub App**, set:
 |                              | Workflows      | Read + Write | Required if any tracked package manager produces updates to `.github/workflows/*.yml`. Without this, those updates fail with `refusing to allow a GitHub App to update workflow files`. |
 |                              | Checks         | Read         | Renovate inspects PR check status when deciding whether to auto-merge. Skip if you never use `automerge: true`.                                                                         |
 |                              | Administration | Read         | Optional. Lets Renovate detect default-branch protection settings. Skip if you don't customize per-repo automerge behavior based on protection.                                         |
+|                              | Dependabot alerts | Read     | Required for Renovate to enrich PRs with vulnerability metadata and honor `vulnerabilityAlerts` config. Without it, every dep-dashboard issue shows `⚠️ WARN: Cannot access vulnerability alerts. Please ensure permissions have been granted.` Also requires the repo to have Dependabot alerts enabled under Settings → Code security. |
 | **Organization permissions** | Members        | Read         | Required for `assignees` / `reviewers` config to resolve org membership. Skip if you only assign individual users by login.                                                             |
 
 | Category                | Permission | Level                                                                                                                                               |
@@ -63,6 +64,20 @@ In practice: if your App is installed with **"Only select repositories"**,
 only those repos can ever be discovered. Switch to **"All repositories"**
 on the installation if you want broader coverage — adding a new repo to
 GitHub will then automatically pick it up on the next Scan.
+
+### Adding a permission to an already-installed App
+
+When you grant the App a new permission (e.g., enabling Dependabot alerts
+read after the fact), GitHub does **not** auto-apply it to existing
+installations. Each installation owner sees a "review request" notification
+and must explicitly accept the new permission scope before it takes effect.
+Until accepted, Renovate runs continue with the old grant — symptoms include
+the dependency-dashboard warning `⚠️ WARN: Cannot access vulnerability
+alerts. Please ensure permissions have been granted.` even though the App's
+permissions page shows the new scope.
+
+To accept: github.com → Settings → Applications → your App → **Review
+request** → approve.
 
 ### Multiple installations of one App
 
@@ -202,7 +217,8 @@ This means:
 
 - [ ] App registered at **Settings → Developer settings → GitHub Apps**.
 - [ ] Repository permissions: Metadata (R), Contents (RW), Pull requests (RW),
-      Issues (RW), Workflows (RW). Plus Checks (R) if using `automerge`.
+      Issues (RW), Workflows (RW), Dependabot alerts (R). Plus Checks (R) if
+      using `automerge`.
 - [ ] App installed on the target org(s).
 - [ ] Private key downloaded as `.pem`.
 - [ ] Secret with `private-key.pem` key created in the **operator's release
