@@ -23,7 +23,7 @@ created: 2026-05-31
   - [Observation 2 — sink is pluggable; Redis is the first impl](#observation-2--sink-is-pluggable-redis-is-the-first-impl)
   - [Observation 3 — off by default; consumer owns the queue](#observation-3--off-by-default-consumer-owns-the-queue)
   - [Observation 4 — optional ownership enrichment from two sources](#observation-4--optional-ownership-enrichment-from-two-sources)
-  - [Observation 5 — Prometheus stays platform-ops-only](#observation-5--prometheus-stays-platform-ops-only)
+  - [Observation 5 — Prometheus stays platform-ops-only, but grows to cover the new contract](#observation-5--prometheus-stays-platform-ops-only-but-grows-to-cover-the-new-contract)
 - [Conclusion](#conclusion)
 - [Recommendation](#recommendation)
 - [References](#references)
@@ -271,11 +271,11 @@ extra reqs vs. 4500/hr * 24 = 108K available). For high-frequency
 schedules or instances near rate-limit pressure, enrichment is off
 by default precisely because it's not free.
 
-### Observation 5 — Prometheus stays platform-ops-only
+### Observation 5 — Prometheus stays platform-ops-only, but grows to cover the new contract
 
 The existing Prometheus/Grafana/OTel/Loki surface is for the
 **platform team** running the operator. It is *not* for the dev
-teams owning the repos. This investigation does not change that:
+teams owning the repos. This investigation preserves that:
 
 - No per-repo / per-PR collectors get added to
   `internal/observability/metrics.go`. The cardinality alone (1K
@@ -286,9 +286,32 @@ teams owning the repos. This investigation does not change that:
   ActiveRuns, etc.) stay scoped to `{scan, platform, result}` and
   remain the platform team's debugging surface.
 
-This separation is load-bearing. Capture it explicitly in
-DESIGN-0001's observability section before v0.2.x lands so future
-contributors don't conflate the two.
+**However**, once the operator takes on "publish an event for every
+repo in every Run" as part of its contract, it owes the platform
+team a way to verify that contract is being honored. That is
+unambiguously platform-ops — "is the operator doing what it says
+it does?" — and belongs in Prometheus, scoped to the *sink*, not
+the repos:
+
+| Metric | Type | Labels | What it answers |
+|---|---|---|---|
+| `renovate_eventsink_up` | Gauge (0/1) | `{sink}` | Is the sink reachable? (For Redis: PING success on a ticker; default off, set 1 when last publish or ping succeeded, 0 when last attempt failed.) |
+| `renovate_eventsink_published_total` | Counter | `{sink, result}` | Throughput. `result=success\|failure`. Failure rate over throughput is the SLO. |
+| `renovate_eventsink_publish_duration_seconds` | Histogram | `{sink}` | Delivery latency. Native histogram or default buckets — captures Redis tail latency separately from reconciler latency. |
+| `renovate_eventsink_dropped_total` | Counter | `{sink, reason}` | When the sink fails *and* we decide not to retry (e.g., timeout, payload too large, sink wedged past a threshold). `reason` is a small enum. |
+
+Cardinality stays bounded: `sink` is one value in v0.2.x (`redis`),
+`result` has two, `reason` has a handful. Nothing per-repo, nothing
+per-Run.
+
+`renovate_eventsink_up` is the page-worthy one — if the operator
+can't reach its sink, the contract is broken and the platform team
+needs to know before the consumer notices a gap.
+
+This separation (consumer data → event sink; operator's own
+delivery telemetry → Prometheus) is load-bearing. Capture it
+explicitly in DESIGN-0001's observability section before v0.2.x
+lands so future contributors don't conflate the two.
 
 ## Conclusion
 
@@ -328,9 +351,20 @@ it — no operator change needed.
      so reconciliation doesn't re-fetch).
 5. **Chart values surface** under `eventSink` and `eventSink.enrichment`
    as sketched above. Default both `enabled: false`.
-6. **Do not** add per-PR / per-repo collectors to the Prometheus
-   surface. Capture the audience split in DESIGN-0001 so it survives
-   future contributors.
+6. **Sink-level Prometheus collectors** in
+   `internal/observability/metrics.go`:
+   `renovate_eventsink_up{sink}`,
+   `renovate_eventsink_published_total{sink, result}`,
+   `renovate_eventsink_publish_duration_seconds{sink}`,
+   `renovate_eventsink_dropped_total{sink, reason}`. Wired by the
+   `Sink` wrapper so every implementation gets them for free.
+   Default Grafana panels + a PrometheusRule alert on `up == 0` or
+   `failure_rate > X%`.
+7. **Do not** add per-PR / per-repo collectors to the Prometheus
+   surface. The new sink-level metrics in (6) cover the operator's
+   contract; the consumer is responsible for everything downstream.
+   Capture the audience split in DESIGN-0001 so it survives future
+   contributors.
 
 **Out of scope for the operator** (forever, not just v0.2.x):
 
