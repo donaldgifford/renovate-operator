@@ -33,4 +33,5 @@ docz create design "Your Design Title"
 | ID | Title | Status | Date | Author | Link |
 |----|-------|--------|------|--------|------|
 | DESIGN-0001 | renovate-operator v0.1.0 | In Review | 2026-04-26 | donaldgifford | [0001-renovate-operator-v0-1-0.md](0001-renovate-operator-v0-1-0.md) |
+| DESIGN-0002 | renovate-operator v0.2.0 | Draft | 2026-05-31 | Donald Gifford | [0002-renovate-operator-v020.md](0002-renovate-operator-v020.md) |
 <!-- END DOCZ AUTO-GENERATED -->
