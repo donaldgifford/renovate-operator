@@ -43,8 +43,14 @@ can trigger Runs. Five components, all opt-in:
 
 1. **Internal HTTP API** — Go service shipped with the operator
    chart, reads/writes CRDs, consumes EventSink, exposes OpenAPI.
-2. **EventSink consumer** — reads the Redis Stream populated by
-   the v0.2.0 EventSink and lands records in the datastore.
+   Deploys in one of two modes:
+   - **Embedded** — runs as a goroutine in the manager binary,
+     reads from the in-memory EventSink directly. No Redis required.
+   - **Separate** — runs as its own Deployment, reads from the
+     Redis Streams EventSink via `XREADGROUP`.
+2. **EventSink consumer** — runs inside the API binary (either
+   mode). Source depends on mode: in-memory channel `Subscribe()`
+   for embedded, Redis stream for separate.
 3. **Datastore** — Postgres. Persists events for queryable
    history.
 4. **External UI / API router** — bun + hono + React. Lives in a
@@ -54,9 +60,12 @@ can trigger Runs. Five components, all opt-in:
    Inbound platform `push` events trigger one-shot Runs.
 
 The release theme: **the operator gains an interactive interface.**
-The v0.2.0 EventSink is the data feed; v0.3.0 makes that data
-useful and adds a symmetric inbound path (webhooks for systems,
-HTTP API for humans).
+The v0.2.0 EventSink (both in-memory and Redis backends) is the
+data feed; v0.3.0 makes that data useful and adds a symmetric
+inbound path (webhooks for systems, HTTP API for humans). The
+embedded API mode means a small install needs only Postgres
+alongside the operator — Redis is optional and reserved for
+external-integration or cross-process-scaling use cases.
 
 ## Goals and Non-Goals
 
@@ -244,11 +253,29 @@ force-run); `delete` on Runs. Bound to a dedicated ServiceAccount.
 
 Runs as a goroutine inside the API binary (single deployable
 unit; the consumer needs the same Postgres pool as the read
-endpoints anyway). Toggleable to a sidecar if scale requires it
-later.
+endpoints anyway). Its event source depends on the API deployment
+mode:
 
-**Stream consumption:**
+**Embedded mode** (`api.deployment.mode: embedded`):
 
+- The API runs as a goroutine in the manager process (same binary
+  as the operator).
+- Reads from `memory.Sink.Subscribe() <-chan eventsink.Event` —
+  a buffered Go channel populated by the operator's Run
+  reconciler.
+- No Redis required. No `XREADGROUP`, no consumer groups, no
+  network hop.
+- Per-event flow: receive on channel → normalize → upsert to
+  Postgres. On Postgres failure, log + retry with bounded backoff;
+  the channel buffer absorbs short outages, longer ones surface
+  as `renovate_eventsink_dropped_total{sink="memory", reason="sink_full"}`
+  back at the operator.
+
+**Separate mode** (`api.deployment.mode: separate`):
+
+- The API runs as its own Deployment, distinct from the manager.
+- Requires `eventSink.redis.enabled=true` upstream (template
+  guard fails fast if not).
 - `XREADGROUP` from `renovate.events` (configurable), with a
   consumer group named `renovate-operator-consumer` (configurable).
 - One in-flight message at a time per worker goroutine; bounded
@@ -263,10 +290,22 @@ later.
   consumer backs off and retries. Redis's pending-entries-list
   is the retry queue.
 
-**Schema versioning:** consumer reads `dataschema` from the
-CloudEvent envelope; dispatches to a per-version handler. v1
-handler ships in v0.3.0; v2+ handlers added as the event payload
-evolves.
+**Schema versioning** (both modes): consumer reads `dataschema`
+from the CloudEvent envelope; dispatches to a per-version handler.
+v1 handler ships in v0.3.0; v2+ handlers added as the event
+payload evolves.
+
+**Mode trade-offs:**
+
+| Property | Embedded | Separate |
+|---|---|---|
+| Deployment shape | One pod (manager + API + consumer) | Two pods (manager, API) + Redis |
+| Postgres | Required | Required |
+| Redis | Not required | Required |
+| Buffering during API outage | Bounded Go channel (lossy on overflow) | Redis stream (durable, replayable) |
+| Independent API scaling | No (tied to manager) | Yes |
+| Cross-pod restart durability | Lost (channel cleared on restart) | Preserved (Redis-side) |
+| Best for | Small/homelab installs, single-cluster | Larger installs, multi-tenant, external consumers |
 
 ### Component 3: Datastore
 
@@ -445,7 +484,9 @@ interactions" theme.
 # values.yaml additions
 api:
   enabled: false
-  replicaCount: 1
+  deployment:
+    mode: embedded                                 # embedded | separate
+  replicaCount: 1                                  # only used when mode=separate
   image: { repository: "ghcr.io/donaldgifford/renovate-operator-api", tag: "" }
   resources: { ... }
   service: { type: ClusterIP, port: 8080 }
@@ -457,7 +498,9 @@ api:
     migrations: { autoApply: true }
   consumer:
     enabled: true                                  # consumer in same binary
-    group: "renovate-operator-consumer"
+    # When deployment.mode=embedded, reads from in-memory Sink (Subscribe).
+    # When deployment.mode=separate, reads from eventSink.redis stream.
+    group: "renovate-operator-consumer"            # used in separate mode only
     workers: 4
   eventsRetentionDays: 90
 
@@ -546,9 +589,13 @@ v0.3.0 release is fully additive. Upgrade path from any v0.2.x install:
      --set webhook.ingress.hosts[0].host=renovate-webhooks.example.com \
      ...
    ```
-7. EventSink (from v0.2.0) must be enabled and pointing at a
-   reachable Redis for the consumer to have anything to read.
-   Template guard fails fast if `api.enabled=true && api.consumer.enabled=true && eventSink.enabled=false`.
+7. EventSink (from v0.2.0) must be enabled for the consumer to
+   have anything to read. Required backend depends on mode:
+   - `api.deployment.mode=embedded` requires
+     `eventSink.memory.enabled=true`.
+   - `api.deployment.mode=separate` requires
+     `eventSink.redis.enabled=true`.
+   Template guards fail-fast on mismatch.
 
 Acceptance criteria for v0.3.0 GA:
 

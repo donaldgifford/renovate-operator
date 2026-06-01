@@ -69,10 +69,14 @@ this one if a re-scoping is warranted.
 ### 1. EventSink
 
 Operator emits one structured CloudEvents-shaped event per repo
-per Run to a pluggable sink. Redis Streams is the first impl.
-Optional ownership enrichment from GitHub repo custom properties
-or `catalog-info.yaml`. Sink-level Prometheus collectors cover
-the "I published" contract.
+per Run through a pluggable `Sink` interface. Two implementations
+ship day one: **in-memory** (Go channel; for in-process consumers
+like the v0.3.0 embedded API) and **Redis Streams** (for
+cross-process consumers and external integrations). A `Fanout`
+wrapper lets both be active simultaneously. Optional ownership
+enrichment from GitHub repo custom properties or
+`catalog-info.yaml`. Sink-level Prometheus collectors cover the
+"I published" contract, labeled per backend.
 
 **Source:** [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md).
 **Assigned to:** v0.2.0. Detailed design: [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md).
