@@ -13,6 +13,18 @@ created: 2026-05-31
 **Author:** Donald Gifford
 **Date:** 2026-05-31
 
+> **Re-scoped 2026-08-01.** The release assignments below are
+> superseded by [DESIGN-0005 §Release sequencing](0005-operator-state-in-postgres-and-valkey-backed-scheduling.md):
+> v0.2.0 became Postgres state + tuned Job dispatch + a Valkey-backed
+> Renovate package cache (a Valkey work *queue* is deferred behind
+> explicit scale triggers), DESIGN-0004 was
+> re-drafted around an embedded Connect API + Bun UI (consumer and
+> datastore components retired), and the EventSink (DESIGN-0003,
+> re-scoped to outbound events only) was decoupled from the release
+> train. Per this doc's own sealing rule, the rationale lives in
+> DESIGN-0005, not here. The candidate survey and deferred-item
+> assignments below remain accurate.
+
 <!--toc:start-->
 - [Overview](#overview)
 - [Why this doc exists](#why-this-doc-exists)

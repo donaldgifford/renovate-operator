@@ -1,17 +1,29 @@
 ---
 id: DESIGN-0004
-title: "Operator HTTP API, consumer, datastore, UI, and webhook receiver for renovate-operator v0.3.0"
+title: "Embedded Connect API, Bun UI, and webhook receiver for renovate-operator v0.3.0"
 status: Draft
 author: Donald Gifford
 created: 2026-05-31
 ---
 <!-- markdownlint-disable-file MD025 MD041 -->
 
-# DESIGN 0004: Operator HTTP API, consumer, datastore, UI, and webhook receiver for renovate-operator v0.3.0
+# DESIGN 0004: Embedded Connect API, Bun UI, and webhook receiver for renovate-operator v0.3.0
 
 **Status:** Draft
 **Author:** Donald Gifford
-**Date:** 2026-05-31
+**Date:** 2026-05-31 (re-drafted 2026-08-01)
+
+> **Re-draft note (2026-08-01).** The original version of this doc
+> specified five components: a standalone REST internal API
+> (chi + oapi-codegen), an EventSink consumer, a Postgres datastore,
+> an external Bun router/UI, and a webhook receiver. With
+> [DESIGN-0005](0005-operator-state-in-postgres-and-valkey-backed-scheduling.md)
+> making the operator the direct writer of Postgres state, the
+> consumer is gone and the datastore moved to DESIGN-0005. The API
+> survived the rethink but changed shape: **ConnectRPC embedded in
+> the manager binary** instead of a standalone REST service. Three
+> components remain. Rationale for the layering decision is in
+> DESIGN-0005 §Background.
 
 <!--toc:start-->
 - [Overview](#overview)
@@ -21,11 +33,9 @@ created: 2026-05-31
 - [Background](#background)
 - [Architecture overview](#architecture-overview)
 - [Detailed Design](#detailed-design)
-  - [Component 1: Internal HTTP API](#component-1-internal-http-api)
-  - [Component 2: EventSink consumer](#component-2-eventsink-consumer)
-  - [Component 3: Datastore](#component-3-datastore)
-  - [Component 4: External UI / API router](#component-4-external-ui--api-router)
-  - [Component 5: Webhook receiver](#component-5-webhook-receiver)
+  - [Component 1: Embedded Connect API](#component-1-embedded-connect-api)
+  - [Component 2: External UI / BFF](#component-2-external-ui--bff)
+  - [Component 3: Webhook receiver](#component-3-webhook-receiver)
 - [API / Interface Changes](#api--interface-changes)
 - [Data Model](#data-model)
 - [Testing Strategy](#testing-strategy)
@@ -38,661 +48,398 @@ created: 2026-05-31
 ## Overview
 
 v0.3.0 ships the operator's customer-facing surface: humans see
-what Renovate is doing across their repos, and external systems
-can trigger Runs. Five components, all opt-in:
+what Renovate is doing across their repos, and external systems can
+trigger Runs. Three components, all opt-in:
 
-1. **Internal HTTP API** — Go service shipped with the operator
-   chart, reads/writes CRDs, consumes EventSink, exposes OpenAPI.
-   Deploys in one of two modes:
-   - **Embedded** — runs as a goroutine in the manager binary,
-     reads from the in-memory EventSink directly. No Redis required.
-   - **Separate** — runs as its own Deployment, reads from the
-     Redis Streams EventSink via `XREADGROUP`.
-2. **EventSink consumer** — runs inside the API binary (either
-   mode). Source depends on mode: in-memory channel `Subscribe()`
-   for embedded, Redis stream for separate.
-3. **Datastore** — Postgres. Persists events for queryable
-   history.
-4. **External UI / API router** — bun + hono + React. Lives in a
-   separate repo. Handles auth, TLS, public exposure. Talks to
-   the internal API via a generated OpenAPI client.
-5. **Webhook receiver** — separate Deployment in the chart.
-   Inbound platform `push` events trigger one-shot Runs.
+1. **Embedded Connect API** — a [ConnectRPC](https://connectrpc.com)
+   service mounted as an `http.Handler` inside the existing manager
+   process. Reads Postgres (DESIGN-0005's state) through the
+   manager's in-process pool, reads/writes CRDs through the
+   manager's cached client. Speaks Connect + gRPC + gRPC-Web on one
+   port. The proto package in this repo is the contract; `buf
+   breaking` in CI enforces it.
+2. **External UI / BFF** — Bun + Hono + React. Owns OIDC auth, TLS,
+   public exposure, per-user filtering, and the browser experience.
+   Talks to the Connect API via `connect-es` (fetch-based, no
+   grpc-js). **Never touches Postgres, Valkey, or the Kubernetes
+   API.**
+3. **Webhook receiver** — separate binary + Deployment in the
+   chart. Inbound platform `push` events create one-shot Runs.
 
-The release theme: **the operator gains an interactive interface.**
-The v0.2.0 EventSink (both in-memory and Redis backends) is the
-data feed; v0.3.0 makes that data useful and adds a symmetric
-inbound path (webhooks for systems, HTTP API for humans). The
-embedded API mode means a small install needs only Postgres
-alongside the operator — Redis is optional and reserved for
-external-integration or cross-process-scaling use cases.
+The thin-API principle, stated once: the Connect API is a
+translation layer over state the operator already owns. Query
+logic that exists to serve one UI page lives behind one RPC; no
+business logic accretes in the API that belongs in the reconcilers,
+and no datastore access ever moves client-side.
 
 ## Goals and Non-Goals
 
 ### Goals
 
-- Internal HTTP API as a separate binary in the operator chart,
-  off by default. Reads CRDs (list Platforms/Scans/Runs), writes
-  a small set of imperative operations (suspend Scan, force Run,
-  delete Run), serves the OpenAPI spec.
-- Postgres-backed datastore for event history. Schema migrated
-  by the API service at startup.
-- EventSink consumer running in the API binary (or a sidecar —
-  see §Open Questions) reading a Redis Streams consumer group
-  and writing normalized rows to Postgres.
-- Webhook receiver as a separate binary + Deployment in the
-  operator chart, off by default. Verifies signatures, creates
-  one-shot Runs. Webhook-triggered Runs flow through EventSink
-  identically to scheduled Runs.
-- OpenAPI v3 spec generated from Go types; published at
-  `/openapi.yaml` on the API service. Used to generate the
-  external router's typed client.
-- External UI lives in `<separate-repo>` or
-  `web/`; this DESIGN reaches only as far as the contract (the
-  OpenAPI spec). UI implementation is out of scope for this doc.
-- All five components fully opt-in via chart values. A v0.2.x
-  install on upgrade sees zero behavior change.
+- Connect service definition in `proto/renovate/v1/`, served from
+  the manager process on a dedicated port, off by default.
+- Read RPCs over Postgres (repo history, PRs, vulns, summaries) and
+  over CRDs (Platforms, Scans, Runs).
+- The four imperative operations — suspend Scan, resume Scan, force
+  Run, delete Run — as RPCs, executed with the manager's own client.
+- Server-streaming RPC for live Run progress (feeds the BFF's SSE
+  to the browser).
+- `buf generate` produces Go server stubs (this repo) and TS client
+  stubs (consumed by the UI repo); `buf breaking` gates CI.
+- Webhook receiver: signature-verified inbound events → one-shot
+  Runs, dedupe window, off by default.
+- All components fully opt-in; a v0.2.x install upgrading sees zero
+  behavior change.
 
 ### Non-Goals
 
-- **No auth in the internal API.** Auth is the external router's
-  job. The internal API is reachable only from inside the cluster
-  on a `ClusterIP` Service and trusts its caller. Network policy
-  is the security boundary.
-- **No multi-tenancy in the API or datastore.** Single
-  operator-namespace install today; multi-tenant isolation is
-  v0.4.x+ when a real tenant appears.
-- **No UI shipped in this repo's chart.** The chart packages the
-  API + consumer + webhook + Postgres connection only. UI is a
-  separate deliverable in its own repo, with its own release
-  cadence.
-- **No replacement for `kubectl`.** The API exposes the small set
-  of operations the UI needs; it is not a general K8s proxy.
-- **No event replay from Postgres.** The API serves history;
-  replaying events to re-trigger something is out of scope.
-- **No write-path through the external router that bypasses the
-  internal API.** Everything the router can do is something the
-  internal API exposes.
+- **No auth in the Connect API.** Auth is the BFF's job. The API is
+  ClusterIP-only; NetworkPolicy restricts ingress to the BFF pods.
+- **No REST/OpenAPI surface.** The proto is the contract. (Connect's
+  JSON-over-POST protocol means `curl` still works for debugging.)
+- **No consumer, no event pipeline.** The operator writes its own
+  state (DESIGN-0005).
+- **No UI implementation detail in this doc.** Page layout,
+  component library, owner-group → user mapping are the UI repo's
+  concern. This doc reaches as far as the proto contract and the
+  BFF's responsibilities.
+- **No multi-tenancy.** Single operator-namespace install; v0.4.x+
+  question.
+- **No general K8s proxy.** The RPC surface is exactly what the UI
+  needs, nothing more.
 
 ## Background
 
-DESIGN-0002 decided to bundle these five components into one
-release because they share a theme — "external interactions with
-the operator" — and because shipping any of them in isolation
-produces something half-finished:
+The original five-component design assumed the operator owned no
+state, so a standalone API had to exist to aggregate CRDs + an
+event-fed Postgres. Two rounds of rethinking (2026-08-01) collapsed
+this:
 
-- Webhook receiver alone: just another way to make a Run happen;
-  `kubectl` already does that.
-- HTTP API alone: nothing on the other end to use it.
-- Consumer alone: data lands in Postgres with no UI to surface
-  it.
-- UI alone: no API to drive it.
-
-Together, they form a coherent feature: **"the operator now has
-a UI."** All five are opt-in; an operator that doesn't enable any
-of them runs identically to v0.2.0.
-
-The v0.2.0 EventSink is a precondition for this release because
-it provides the source of truth for the consumer. The architectural
-flow:
-
-```
-RenovateRun → EventSink (Redis Streams) → Consumer → Postgres → Internal API → External Router → UI
-                                                                                         ↑
-                                                          Auth/OIDC, TLS, public exposure
-```
-
-And, in the reverse direction:
-
-```
-GitHub/Forgejo → Webhook Receiver → RenovateRun (one-shot) → ... → EventSink → Consumer → ...
-
-UI → External Router → Internal API → CRD mutation (suspend, force, delete) → operator reconcile
-```
+- Operator writes Postgres directly → consumer deleted, datastore
+  design moved to DESIGN-0005.
+- The remaining question — should the UI's Bun server just query
+  Postgres itself? — resolved to **no**: keeping a thin Go API in
+  front means the schema stays private to this repo (refactor
+  freely; `buf breaking` is the compatibility gate), cluster
+  credentials never reach the internet-facing app, and future
+  non-UI consumers (a CLI, repo-guardian integration) get a gRPC
+  surface for free from the same server.
+- Embedding the API in the manager (connect-go is just an
+  `http.Handler`; the manager already serves metrics/healthz
+  listeners) removes the standalone-Deployment cost that made the
+  layer feel heavy. Splitting it out later is a `main.go` wiring
+  change, not a redesign.
 
 ## Architecture overview
 
 ```
-                    ┌─────────────────────────────────────────────────────┐
-                    │ External (DMZ / Ingress / behind OIDC reverse-proxy) │
-                    └─────────────────────────────────────────────────────┘
-                                            │
-                                            │ HTTPS, OIDC-authenticated
-                                            ▼
-                    ┌─────────────────────────────────────────┐
-                    │ External UI/API router (bun + hono)     │  separate repo
-                    │  - serves React UI                       │  separate release
-                    │  - auth (OIDC)                           │
-                    │  - typed OpenAPI client → internal API   │
-                    └─────────────────────────────────────────┘
-                                            │
-                                            │ HTTP, in-cluster
-                                            │ (ClusterIP, NetworkPolicy)
-                                            ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│ renovate-operator chart (in-cluster)                                  │
-│                                                                       │
-│  ┌──────────────────────────┐    ┌──────────────────────────────┐   │
-│  │ Internal HTTP API         │    │ Webhook receiver              │   │
-│  │  - reads/writes CRDs      │    │  - verifies GH/Forgejo sigs   │   │
-│  │  - reads Postgres         │    │  - creates one-shot Runs      │   │
-│  │  - serves OpenAPI         │    └──────────────────────────────┘   │
-│  └──────────────────────────┘            │                            │
-│        │            │                    │                            │
-│        │ K8s API    │ SQL                ▼                            │
-│        ▼            ▼            ┌──────────────────────┐             │
-│  ┌──────────┐  ┌──────────┐      │ RenovateRun (CRD)    │             │
-│  │ K8s API  │  │ Postgres │      └──────────────────────┘             │
-│  └──────────┘  └──────────┘                │                          │
-│                     ▲                       │                          │
-│                     │                       ▼                          │
-│                     │           ┌─────────────────────┐                │
-│                     │ writes    │ Operator reconciler │                │
-│                     │           └─────────────────────┘                │
-│                     │                       │                          │
-│              ┌──────────────┐               │ (v0.2.0 path)            │
-│              │ Consumer     │               ▼                          │
-│              │  - XREADGROUP│       ┌──────────────┐                  │
-│              │  - normalize │◀──────│ EventSink    │                  │
-│              │  - upsert    │       │ (Redis)      │                  │
-│              └──────────────┘       └──────────────┘                  │
-└──────────────────────────────────────────────────────────────────────┘
+                 ┌─────────────────────────────────────────────┐
+                 │ External (Ingress, OIDC, TLS)               │
+                 └─────────────────────────────────────────────┘
+                                     │ HTTPS
+                                     ▼
+                 ┌─────────────────────────────────────────────┐
+                 │ BFF/UI (bun + hono + React)   separate repo │
+                 │  - OIDC auth, per-user owner filtering      │
+                 │  - serves React static assets               │
+                 │  - connect-es client → Connect API          │
+                 │  - SSE to browser from WatchRuns stream     │
+                 └─────────────────────────────────────────────┘
+                                     │ Connect (HTTP), in-cluster
+                                     │ ClusterIP + NetworkPolicy
+                                     ▼
+┌───────────────────────────────────────────────────────────────────┐
+│ manager pod (renovate-operator chart)                             │
+│                                                                   │
+│  ┌─────────────────────────────┐   ┌──────────────────────────┐  │
+│  │ Connect API (:9444)         │   │ Reconcilers (v0.1.x +    │  │
+│  │  - reads PG (shared pool)   │   │  DESIGN-0005 state)      │  │
+│  │  - reads CRDs (cached cli)  │   └──────────────────────────┘  │
+│  │  - 4 imperative ops         │        │                        │
+│  └─────────────────────────────┘        │ SQL                    │
+│              │       │                  ▼                        │
+│              │ SQL   │ K8s API   ┌──────────┐                    │
+│              └───────┼──────────▶│ Postgres │                    │
+│                      ▼           └──────────┘                    │
+│               ┌──────────┐   (workers → Valkey is cache-only,    │
+│               │ K8s API  │    outside the manager: DESIGN-0005)  │
+│               └──────────┘                                       │
+└───────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────┐
+│ Webhook receiver (own    │   GitHub/Forgejo → verify sig →
+│ Deployment, off default) │   one-shot RenovateRun → reconcile
+└──────────────────────────┘
 ```
 
 ## Detailed Design
 
-### Component 1: Internal HTTP API
+### Component 1: Embedded Connect API
 
-New binary: `cmd/api/main.go`. Built and packaged alongside the
-existing manager + (new) webhook-receiver binaries. Single
-container image, multiple entrypoints via the args.
+**Framework:** [`connectrpc.com/connect`](https://connectrpc.com)
+(connect-go). Handlers mount on a dedicated listener (default
+`:9444`) started by the manager when `api.enabled=true`, alongside
+the existing metrics/healthz/pprof listeners. One implementation
+serves three protocols (Connect, gRPC, gRPC-Web) — a future Go CLI
+dials gRPC against the same port with zero server work.
 
-**Framework:** [`chi`](https://pkg.go.dev/github.com/go-chi/chi/v5)
-for routing + middleware. Stdlib `net/http` for everything else.
-No gRPC, no Connect, no fancy ORM. Match the operator's
-"minimum dependencies" posture.
+**Contract:** `proto/renovate/v1/*.proto`, owned by this repo.
+`buf.gen.yaml` generates Go stubs in-repo; the UI repo runs its own
+`buf generate` against a pinned tag of this repo (or BSR later —
+see Open Questions). `buf lint` + `buf breaking --against` main in
+CI here.
 
-**OpenAPI generation:** [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen)
-from hand-written `api/openapi/v1/openapi.yaml`. Hand-written
-spec, generated server stubs + client stubs. The spec lives in
-the repo and is what the external router code-generates against.
+**Service surface (v1):**
 
-**Endpoints (v0.3.0 surface, all under `/api/v1/`):**
+```protobuf
+service RenovateService {
+  // CRD reads (manager's cached client)
+  rpc ListPlatforms(ListPlatformsRequest) returns (ListPlatformsResponse);
+  rpc GetPlatform(GetPlatformRequest) returns (GetPlatformResponse);
+  rpc ListScans(ListScansRequest) returns (ListScansResponse);       // namespace filter
+  rpc GetScan(GetScanRequest) returns (GetScanResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);          // scan/platform/status filters
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
 
-| Method + Path | Purpose |
-|---|---|
-| `GET /healthz`, `/readyz` | Liveness + readiness. |
-| `GET /openapi.yaml` | Serves the spec. |
-| `GET /platforms` | List Platforms. |
-| `GET /platforms/{name}` | Get one Platform with current status. |
-| `GET /scans` | List Scans (cluster-wide, supports `?namespace=` filter). |
-| `GET /scans/{ns}/{name}` | Get one Scan. |
-| `POST /scans/{ns}/{name}/suspend` | Set `spec.suspend=true`. |
-| `POST /scans/{ns}/{name}/resume` | Set `spec.suspend=false`. |
-| `POST /scans/{ns}/{name}/runs` | Force a one-shot Run for this Scan. Implementation: create a Run with `spec.target.repos` cleared (i.e., go through discovery), no `parentScanRef`. |
-| `GET /runs` | List Runs (cluster-wide, supports `?scan=`, `?platform=`, `?status=` filters). |
-| `GET /runs/{ns}/{name}` | Get one Run. |
-| `DELETE /runs/{ns}/{name}` | Delete a Run (cascades to its Job). |
-| `GET /events` | Query historical events from Postgres. Supports `?owner=`, `?repo=`, `?since=`, `?until=`, `?type=`, pagination. |
-| `GET /events/by-owner/{owner}` | Events filtered by `ownership.owner` (Backstage owner field). |
-| `GET /repos` | List repos seen in events, with summary (latest Run, open PR count, vuln count). |
-| `GET /repos/{owner}/{name}/events` | All events for one repo. |
-| `GET /metrics-summary` | Aggregate counts for the UI dashboard (total runs in last 24h, total open PRs, total vulns). Cheap rollup, not a Prom replacement. |
+  // Imperative ops (manager's client; rate-limited)
+  rpc SuspendScan(SuspendScanRequest) returns (SuspendScanResponse);
+  rpc ResumeScan(ResumeScanRequest) returns (ResumeScanResponse);
+  rpc ForceRun(ForceRunRequest) returns (ForceRunResponse);          // 1/Scan/min default
+  rpc DeleteRun(DeleteRunRequest) returns (DeleteRunResponse);
 
-**K8s client:** uses the operator's existing
-`sigs.k8s.io/controller-runtime/pkg/client.Client` (cached client
-in-process when the API binary runs alongside the manager; direct
-client when run separately).
+  // State reads (Postgres, DESIGN-0005 schema)
+  rpc ListRepos(ListReposRequest) returns (ListReposResponse);       // summary: latest run, open PRs, vulns
+  rpc GetRepoHistory(GetRepoHistoryRequest) returns (GetRepoHistoryResponse);
+  rpc QueryResults(QueryResultsRequest) returns (QueryResultsResponse); // owner/repo/since/until/outcome, paginated
+  rpc GetSummary(GetSummaryRequest) returns (GetSummaryResponse);    // dashboard rollups
 
-**RBAC:** new ClusterRole `renovate-operator-api` with
-`get`/`list`/`watch` on Platforms, Scans, Runs across the cluster;
-`patch` on Scans (for suspend/resume); `create` on Runs (for
-force-run); `delete` on Runs. Bound to a dedicated ServiceAccount.
-
-### Component 2: EventSink consumer
-
-Runs as a goroutine inside the API binary (single deployable
-unit; the consumer needs the same Postgres pool as the read
-endpoints anyway). Its event source depends on the API deployment
-mode:
-
-**Embedded mode** (`api.deployment.mode: embedded`):
-
-- The API runs as a goroutine in the manager process (same binary
-  as the operator).
-- Reads from `memory.Sink.Subscribe() <-chan eventsink.Event` —
-  a buffered Go channel populated by the operator's Run
-  reconciler.
-- No Redis required. No `XREADGROUP`, no consumer groups, no
-  network hop.
-- Per-event flow: receive on channel → normalize → upsert to
-  Postgres. On Postgres failure, log + retry with bounded backoff;
-  the channel buffer absorbs short outages, longer ones surface
-  as `renovate_eventsink_dropped_total{sink="memory", reason="sink_full"}`
-  back at the operator.
-
-**Separate mode** (`api.deployment.mode: separate`):
-
-- The API runs as its own Deployment, distinct from the manager.
-- Requires `eventSink.redis.enabled=true` upstream (template
-  guard fails fast if not).
-- `XREADGROUP` from `renovate.events` (configurable), with a
-  consumer group named `renovate-operator-consumer` (configurable).
-- One in-flight message at a time per worker goroutine; bounded
-  worker count (default 4).
-- `XACK` after the row is committed to Postgres.
-- On parse failure (malformed CloudEvent, schema mismatch,
-  unknown event type), the message is `XACK`ed, logged with the
-  raw payload, and a counter (`renovate_consumer_skipped_total{reason}`)
-  is incremented. Not retried — a malformed event is permanently
-  malformed.
-- On Postgres failure, the message is **not** `XACK`ed; the
-  consumer backs off and retries. Redis's pending-entries-list
-  is the retry queue.
-
-**Schema versioning** (both modes): consumer reads `dataschema`
-from the CloudEvent envelope; dispatches to a per-version handler.
-v1 handler ships in v0.3.0; v2+ handlers added as the event
-payload evolves.
-
-**Mode trade-offs:**
-
-| Property | Embedded | Separate |
-|---|---|---|
-| Deployment shape | One pod (manager + API + consumer) | Two pods (manager, API) + Redis |
-| Postgres | Required | Required |
-| Redis | Not required | Required |
-| Buffering during API outage | Bounded Go channel (lossy on overflow) | Redis stream (durable, replayable) |
-| Independent API scaling | No (tied to manager) | Yes |
-| Cross-pod restart durability | Lost (channel cleared on restart) | Preserved (Redis-side) |
-| Best for | Small/homelab installs, single-cluster | Larger installs, multi-tenant, external consumers |
-
-### Component 3: Datastore
-
-**Choice: Postgres 16+.** Why:
-
-- The query patterns (`WHERE owner = $1 AND opened_at > NOW() - $2`)
-  are textbook RDBMS. Time-series databases don't help here —
-  cardinality is moderate (events per repo per day) and the
-  filters are categorical, not numeric.
-- The operator's environment is K8s; CloudNativePG and Crunchy
-  Postgres Operator are well-understood deploys.
-- Backstage ecosystem standardizes on Postgres; if/when the UI
-  ends up Backstage-shaped, no impedance mismatch.
-
-**Deployment:** the chart does *not* deploy Postgres. The user
-provides connection details via a Secret (same posture as the
-EventSink's Redis connection). For the homelab a single-pod
-Postgres is fine; for production CloudNativePG or a managed
-service.
-
-**Schema migration:** the API binary embeds migrations via
-[`golang-migrate/migrate`](https://github.com/golang-migrate/migrate)
-and runs them on startup. Idempotent, transaction-wrapped, fails
-the pod readiness if migration fails.
-
-**Tables (initial v1):**
-
-```sql
-CREATE TABLE events (
-  id              BIGSERIAL PRIMARY KEY,
-  ce_id           TEXT NOT NULL UNIQUE,           -- CloudEvent id, dedupe key
-  ce_type         TEXT NOT NULL,                  -- "dev.fartlab.renovate.run.repo.completed"
-  ce_time         TIMESTAMPTZ NOT NULL,
-  ce_source       TEXT NOT NULL,                  -- "renovate-operator/<scan-ns>/<scan-name>"
-  ce_subject      TEXT NOT NULL,                  -- "<owner>/<name>"
-  ce_dataschema   TEXT NOT NULL,
-  raw_payload     JSONB NOT NULL,                 -- full event for debugging
-  run_uid         TEXT NOT NULL,
-  scan_name       TEXT NOT NULL,
-  platform_name   TEXT NOT NULL,
-  repo_owner      TEXT NOT NULL,
-  repo_name       TEXT NOT NULL,
-  outcome         TEXT NOT NULL,                  -- succeeded|failed|skipped
-  owner_field     TEXT NOT NULL DEFAULT '',       -- ownership.owner
-  system_field    TEXT NOT NULL DEFAULT '',
-  lifecycle_field TEXT NOT NULL DEFAULT '',
-  ownership_src   TEXT NOT NULL DEFAULT 'unset',
-  ingested_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  CONSTRAINT events_repo_check CHECK (repo_owner <> '' AND repo_name <> '')
-);
-CREATE INDEX events_repo_idx           ON events (repo_owner, repo_name, ce_time DESC);
-CREATE INDEX events_owner_idx          ON events (owner_field, ce_time DESC) WHERE owner_field <> '';
-CREATE INDEX events_run_idx            ON events (run_uid);
-CREATE INDEX events_type_time_idx      ON events (ce_type, ce_time DESC);
-
-CREATE TABLE prs (
-  id            BIGSERIAL PRIMARY KEY,
-  event_id      BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  action        TEXT NOT NULL,    -- opened|updated|closed
-  pr_number     INT NOT NULL,
-  url           TEXT NOT NULL,
-  labels        TEXT[] NOT NULL DEFAULT '{}',
-  automerge     BOOLEAN NOT NULL,
-  observed_at   TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX prs_repo_open_age_idx ON prs (event_id, observed_at)
-  WHERE action = 'opened';
-
-CREATE TABLE vulnerabilities (
-  id            BIGSERIAL PRIMARY KEY,
-  event_id      BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  advisory_id   TEXT NOT NULL,
-  severity      TEXT NOT NULL,
-  package       TEXT NOT NULL,
-  observed_at   TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX vulns_repo_sev_idx ON vulnerabilities (event_id, severity);
+  // Live progress (server-streaming; BFF relays as SSE)
+  rpc WatchRuns(WatchRunsRequest) returns (stream WatchRunsEvent);
+}
 ```
 
-**Retention:** configurable `eventsRetentionDays` (default 90).
-A nightly job (`pg_cron` or a goroutine in the API binary) deletes
-rows older than the threshold. Long-term archival is the user's
-problem.
+Owner filtering (`owner` field on `QueryResults`/`ListRepos`) is a
+plain request field — the API trusts its caller; *which* owners a
+user may pass is the BFF's authorization decision.
 
-### Component 4: External UI / API router
+**Clients, credentials, RBAC:** the API runs in-process, so it uses
+the manager's controller-runtime cached client and the DESIGN-0005
+`pgxpool` directly. No new ServiceAccount, no new RBAC objects, no
+second Postgres connection surface. The imperative RPCs are
+verb-for-verb what the manager's Role already allows. (Accepted
+trade-off vs. a least-privilege split — noted in Security
+Considerations.)
 
-**Not built in this repo.** Lives in `<separate-repo>` (name TBD,
-suggested `renovate-operator-ui`).
+**Observability:** connect-go interceptors emit
+`renovate_api_requests_total{rpc, code}` and
+`renovate_api_request_duration_seconds{rpc}`; OTEL tracing reuses
+the manager's existing tracer (`connectrpc.com/otelconnect`).
 
-**Stack (proposed, not binding):**
+### Component 2: External UI / BFF
 
-- **Bun** runtime for speed and built-in TS support.
-- **Hono** for HTTP routing on the router side (lightweight,
-  edge-friendly).
-- **React** + **TanStack Query** + **TanStack Router** for the UI.
-- **OpenAPI codegen** (e.g., `openapi-typescript` +
-  `openapi-fetch`) to consume the operator's spec.
+**Not built in this repo.** Lives in a separate repo (suggested
+`renovate-operator-ui`) — with the proto as the contract, cross-repo
+coupling is a pinned tag, not a shared schema.
+
+**Stack:** Bun runtime, Hono for the BFF routes, React + TanStack
+Query/Router for the UI, `@connectrpc/connect` +
+`@connectrpc/connect-web` for the typed client (fetch-based; no
+grpc-js, no HTTP/2 shenanigans in Bun).
 
 **Responsibilities:**
 
-- TLS termination at the Ingress.
-- Auth: OIDC with whatever provider the user runs (Authentik,
-  Dex, Auth0, etc.). The router validates tokens and adds an
-  `X-User`-like header that the internal API ignores (the
-  internal API trusts everything; auth is the router's job).
-- Per-user authorization: filter the events stream by the
-  authenticated user's owner-group memberships. This is where
-  "developer logs in, sees only their team's repos" happens.
-- Serves the React UI as static assets.
-- Proxies API calls to the internal API.
+- OIDC against the user's provider (Authentik, Dex, Auth0, ...);
+  validates tokens on every request.
+- Per-user authorization: maps the authenticated user to
+  owner-groups and constrains the `owner` fields it passes to the
+  Connect API. This is where "developer sees only their team's
+  repos" happens.
+- TLS/Ingress exposure; CSP/CORS/rate-limit headers.
+- Serves the React bundle; relays `WatchRuns` as SSE/WebSocket to
+  the browser.
 
-**Contract with the internal API:** the OpenAPI spec at
-`/openapi.yaml`. Any change there is a coordinated release;
-breaking changes bump the spec version and the router pins to
-the version it knows.
+**Contract discipline:** the BFF pins a proto tag and regenerates
+via `buf generate` in its CI. Breaking proto changes require a
+coordinated bump — which `buf breaking` here makes deliberate
+rather than accidental.
 
-**What this DESIGN does *not* specify** about the UI: page layout,
-component library, the exact "owner" model in the auth provider,
-how owner-group → user mapping happens. Those are the UI repo's
-DESIGN. This doc reaches as far as the contract.
+### Component 3: Webhook receiver
 
-### Component 5: Webhook receiver
+Carried over from the original draft; unchanged in substance.
 
-Moved here from DESIGN-0002 because it shares the "external
-interactions" theme.
-
-- New `cmd/webhook-receiver/main.go` binary; new
-  `dist/chart/templates/webhook/` Deployment + Service +
-  optional Ingress (off by default; `webhook.enabled: false`).
+- New `cmd/webhook-receiver/` binary; `dist/chart/templates/webhook/`
+  Deployment + Service + optional Ingress (`webhook.enabled: false`).
 - Endpoints:
   - `POST /github/{platform-name}` — HMAC-SHA256 against the App
     webhook secret; acts on `push`, `pull_request`,
     `installation_repositories`.
   - `POST /forgejo/{platform-name}` — token-header verification;
     acts on `push`.
-- On a relevant event, creates a one-shot `RenovateRun` in the
-  Platform's default namespace (Platform-scoped; new
-  `RenovatePlatform.spec.webhookRunNamespace` field, defaults to
-  the Platform's source namespace) with `spec.target.repos:
-  [owner/name]` and no `parentScanRef`.
-- New `RenovateRun.spec.target.repos []string` field (optional;
-  set only by webhook receiver, not by humans). Reconciler skips
-  discovery when this list is set.
-- Webhook receiver does **not** itself run Renovate — it only
-  files the Run.
-- Webhook-triggered Runs emit through the EventSink identically
-  to scheduled Runs; consumer sees the same event shape.
-- Dedupe: GitHub fires `push` per branch; coalesce events to
-  one Run per (repo, 30s window) via a sliding-window in-memory
-  cache. A burst of pushes during a long-running rebase doesn't
-  create N Runs.
-- Webhook receiver Prometheus collectors:
-  `renovate_webhook_received_total{platform, event, result}`,
+- On a relevant event, creates a one-shot `RenovateRun` in
+  `RenovatePlatform.spec.webhookRunNamespace` (new optional field,
+  defaults to the Platform's source namespace) with
+  `spec.target.repos: [owner/name]` and no parent Scan.
+- New `RenovateRun.spec.target.repos []string` (optional; set by
+  the receiver, not humans). Reconciler skips discovery when set.
+- Webhook-triggered Runs flow through DESIGN-0005 state (and the
+  EventSink, if enabled) identically to scheduled Runs.
+- Dedupe: coalesce to one Run per (repo, 30s window) via in-memory
+  sliding-window cache.
+- Collectors: `renovate_webhook_received_total{platform, event, result}`,
   `renovate_webhook_dedup_skipped_total{platform}`,
   `renovate_webhook_signature_verify_failed_total{platform}`.
 
 ## API / Interface Changes
 
-**CRD additions, all additive:**
+**CRD additions (additive):**
 
-- `RenovateRun.spec.target` struct (optional; populated only by
-  webhook receiver):
-  ```go
-  type RunTarget struct {
-      Repos []string `json:"repos,omitempty"` // "owner/name"
-  }
-  ```
-- `RenovatePlatform.spec.webhookRunNamespace` (optional, string):
-  where webhook-triggered Runs get created. Defaults to the
-  Platform's source namespace.
+- `RenovateRun.spec.target.repos []string` (optional).
+- `RenovatePlatform.spec.webhookRunNamespace` (optional string).
 
-**Helm chart additions (all gated to default-off):**
+**Helm chart additions (default off):**
 
 ```yaml
-# values.yaml additions
 api:
-  enabled: false
-  deployment:
-    mode: embedded                                 # embedded | separate
-  replicaCount: 1                                  # only used when mode=separate
-  image: { repository: "ghcr.io/donaldgifford/renovate-operator-api", tag: "" }
-  resources: { ... }
-  service: { type: ClusterIP, port: 8080 }
-  serviceAccount: { create: true }
-  rbac: { create: true }
-  postgres:
-    dsnSecretRef: { name: "", key: "dsn" }        # required when api.enabled=true
-    maxOpenConns: 25
-    migrations: { autoApply: true }
-  consumer:
-    enabled: true                                  # consumer in same binary
-    # When deployment.mode=embedded, reads from in-memory Sink (Subscribe).
-    # When deployment.mode=separate, reads from eventSink.redis stream.
-    group: "renovate-operator-consumer"            # used in separate mode only
-    workers: 4
-  eventsRetentionDays: 90
+  enabled: false                 # requires state.enabled (DESIGN-0005)
+  port: 9444
+  service: { type: ClusterIP, port: 9444 }
+  networkPolicy:
+    enabled: true                # restrict to BFF pod selector
+    allowedPodSelector: {}
+  forceRun:
+    rateLimitPerScan: "1m"       # min interval between force-runs per Scan
 
 webhook:
   enabled: false
   replicaCount: 2
   image: { repository: "ghcr.io/donaldgifford/renovate-operator-webhook", tag: "" }
-  resources: { ... }
+  resources: { }
   service: { type: ClusterIP, port: 8080 }
-  ingress:
-    enabled: false
-    className: ""
-    hosts: []
-    tls: []
+  ingress: { enabled: false, className: "", hosts: [], tls: [] }
   serviceAccount: { create: true }
-  rbac: { create: true }                           # create RenovateRun in webhookRunNamespace
+  rbac: { create: true }         # create RenovateRun in webhookRunNamespace
   dedupeWindow: "30s"
 ```
 
-**Binary additions:**
+Template guard: `api.enabled && !state.enabled` → render error
+(the API's state reads need DESIGN-0005's Postgres).
 
-- `cmd/api/` — Internal HTTP API + consumer.
-- `cmd/webhook-receiver/` — Webhook receiver.
+**Binary additions:** `cmd/webhook-receiver/` only. The API is not
+a binary — it is a listener in the manager.
 
-**OpenAPI spec at `api/openapi/v1/openapi.yaml`.** Committed to
-this repo. Generated server + client stubs sit alongside.
+**Proto at `proto/renovate/v1/`** with `buf.yaml` / `buf.gen.yaml`
+at the repo root. `buf lint` + `buf breaking` join the CI gates.
 
 ## Data Model
 
-See §Component 3 — Datastore. Schema is owned by the API binary;
-migrations bundled in the image, applied at startup.
-
-CRDs gain two small additive fields (`RunTarget`,
-`Platform.spec.webhookRunNamespace`). No breaking changes.
+Owned by [DESIGN-0005](0005-operator-state-in-postgres-and-valkey-backed-scheduling.md).
+The API is a reader; it adds no tables. If the force-run audit
+question (below) resolves yes, the audit table lands as a
+DESIGN-0005 migration.
 
 ## Testing Strategy
 
-- **Unit (`*_test.go`)**:
-  - API handlers: table-driven tests with a fake K8s client
-    (`fake.NewClientBuilder`) and a `sqlmock`-driven Postgres.
-  - Consumer: miniredis + sqlmock; covers happy path, parse
-    failure, Postgres failure (XACK semantics), schema version
-    dispatch.
-  - Webhook receiver: HMAC verification (happy + tampered),
-    dedupe sliding window, Platform → namespace resolution.
-- **Controller (envtest)**:
-  - Webhook receiver → Run creation with `spec.target.repos`
-    populated; Run reconciler short-circuits discovery; Run
-    completes; EventSink emits.
-- **e2e (kind)**:
-  - Stand up Redis (miniredis), Postgres (CloudNativePG), the
-    operator chart with all four components enabled. Drive a
-    Run, hit the API for the resulting events, assert webhook
-    receiver creates a Run on a simulated GitHub push.
-- **Contract tests**: the external router repo
-  consumes the OpenAPI spec from a pinned version of this repo
-  and runs codegen + a smoke test. CI in *this* repo validates
-  the spec is well-formed via `spectral lint`.
-- Coverage gate stays at ≥80% per package per IMPL-0001.
+- **Unit:** Connect handlers via in-memory
+  `connect.NewUnaryHandler` round-trips with
+  `fake.NewClientBuilder` for CRD paths and `pgxmock` for state
+  paths; table-driven per RPC (happy, not-found, filter
+  combinations, rate-limit rejection).
+- **Controller (envtest):** imperative RPCs against a real
+  apiserver — SuspendScan flips `spec.suspend` and the Scan
+  controller reacts; ForceRun creates a Run the Run controller
+  picks up. Webhook receiver → Run with `target.repos` populated →
+  reconciler short-circuits discovery.
+- **e2e (kind):** chart with `state`, `api`, `webhook` enabled;
+  drive a Run; assert `ListRepos`/`GetRepoHistory` return the
+  DESIGN-0005 rows; simulated GitHub `push` creates a deduped Run;
+  `WatchRuns` streams phase transitions.
+- **Contract:** `buf lint` + `buf breaking --against '.git#branch=main'`
+  in this repo's CI; the UI repo's CI regenerates from its pinned
+  tag and type-checks.
+- Coverage gate ≥80% per package per IMPL-0001.
 
 ## Migration / Rollout Plan
 
-v0.3.0 release is fully additive. Upgrade path from any v0.2.x install:
+Fully additive on top of a v0.2.x (DESIGN-0005-enabled) install:
 
-1. `helm upgrade renovate-operator oci://ghcr.io/donaldgifford/charts/renovate-operator --version 0.3.0`.
-2. New CRD field `RenovateRun.spec.target` is additive; existing
-   Runs unaffected (field is optional).
-3. New CRD field `RenovatePlatform.spec.webhookRunNamespace` is
-   additive; existing Platforms unaffected.
-4. `helm diff` shows new gated blocks (`api.*`, `webhook.*`);
-   nothing renders until opted in.
-5. To opt in to the API + UI stack:
-   ```bash
-   helm upgrade renovate-operator ... \
-     --set api.enabled=true \
-     --set api.postgres.dsnSecretRef.name=postgres-dsn \
-     --set api.postgres.dsnSecretRef.key=dsn
-   ```
-   Then deploy the external router separately, configured against
-   the in-cluster API Service.
-6. To opt in to webhooks:
-   ```bash
-   helm upgrade renovate-operator ... \
-     --set webhook.enabled=true \
-     --set webhook.ingress.enabled=true \
-     --set webhook.ingress.hosts[0].host=renovate-webhooks.example.com \
-     ...
-   ```
-7. EventSink (from v0.2.0) must be enabled for the consumer to
-   have anything to read. Required backend depends on mode:
-   - `api.deployment.mode=embedded` requires
-     `eventSink.memory.enabled=true`.
-   - `api.deployment.mode=separate` requires
-     `eventSink.redis.enabled=true`.
-   Template guards fail-fast on mismatch.
+1. `helm upgrade ... --version 0.3.0` — nothing renders until
+   opted in.
+2. API: `--set api.enabled=true` (requires `state.enabled=true`
+   from v0.2.x; template guard enforces). Connect listener comes up
+   on `:9444` behind a ClusterIP Service + NetworkPolicy.
+3. Deploy the BFF/UI from its repo, pointed at the in-cluster
+   Service, with its OIDC config.
+4. Webhooks: `--set webhook.enabled=true` + Ingress values; add the
+   webhook URL + secret to the GitHub App / Forgejo repo settings.
 
 Acceptance criteria for v0.3.0 GA:
 
-- All five components deployable independently via Helm values.
-- API serves a valid OpenAPI spec at `/openapi.yaml`; spec
-  passes `spectral lint`.
-- Consumer ingests events from the EventSink Redis Stream and
-  upserts them into Postgres without dropping.
-- Webhook receiver creates a Run on a simulated GitHub `push`
-  in the homelab.
-- An external router (a reference implementation in
-  `<separate-repo>`) can authenticate a user, fetch events
-  for the user's owner, and render a usable UI.
+- All three components independently deployable via values.
+- `buf breaking` green against the tag the shipped BFF pins.
+- BFF reference implementation authenticates a user, renders that
+  user's repos/PRs from `QueryResults`, and live-updates a Run via
+  the `WatchRuns` stream.
+- Simulated GitHub `push` produces exactly one Run in the homelab.
 
 ## Security Considerations
 
-- **Internal API has no auth.** Reachable only via in-cluster
-  `ClusterIP`. NetworkPolicy must restrict ingress to the
-  external router's Pod selector. The chart should ship a
-  NetworkPolicy template that does this when
-  `api.enabled && api.networkPolicy.enabled`.
-- **External router owns auth.** This is the only attack surface
-  reachable from outside the cluster. The router must:
-  - Validate OIDC tokens on every request.
-  - Enforce per-user authorization (owner-group filter) before
-    proxying to the internal API.
-  - Set sensible CSP, CORS, and rate-limit headers.
-  - The router is *not* in this repo and is *not* covered by
-    this repo's security posture; its repo will have its own.
-- **Webhook receiver** verifies signatures (HMAC-SHA256 for
-  GitHub, token-header for Forgejo) on every inbound request.
-  Unverified requests are dropped with a 401, no Run created,
-  counter incremented. Webhook secrets live in a K8s Secret
-  referenced from the Platform.
-- **Postgres connection** uses a DSN from a Secret; TLS is the
-  user's choice (chart values pass through `sslmode`).
-- **API → Postgres** uses parameterized queries throughout; no
-  string concatenation. `sqlc` or hand-rolled `db.QueryContext`
-  with `$1`/`$2` placeholders.
-- **Run-creation endpoint (`POST /scans/.../runs`)** is rate-
-  limited per Scan to prevent the UI from accidentally triggering
-  runaway Runs. Default 1 force-run per Scan per minute,
-  configurable.
+- **Connect API has no auth.** ClusterIP + chart-shipped
+  NetworkPolicy restricting ingress to the BFF pod selector. Anyone
+  who can reach the port can do what the UI can do — the network is
+  the boundary, same posture as the original draft.
+- **In-process API shares the manager's identity.** A vulnerability
+  in an API handler has the manager's full RBAC, which is broader
+  than the API's RPC surface. Accepted for v0.3.0 (the alternative
+  — a separate Deployment with a scoped SA — is the documented
+  split-out path if this ever matters; the server code is identical
+  either way).
+- **BFF owns the entire external attack surface**: OIDC validation,
+  per-user authorization *before* proxying, CSP/CORS/rate limits.
+  Covered by its own repo's security posture.
+- **Webhook receiver** verifies HMAC-SHA256 (GitHub) / token header
+  (Forgejo) on every request; failures → 401, counter, no Run.
+- **ForceRun rate limit** (default 1/Scan/min) bounds UI-triggered
+  runaway Runs.
+- **Postgres access** stays parameterized (`$1`/`$2`), pooled, and
+  entirely server-side; the schema is unreachable from outside the
+  manager pod.
 
 ## Open Questions
 
-- **Consumer in-process vs. sidecar.** Default to in-process for
-  v0.3.0; promote to sidecar Deployment if benchmarks show the
-  consumer starving the API request handlers. Make this a
-  one-line config flip.
-- **CloudNativePG vs. user-provided Postgres.** Chart should
-  document both paths; default values require a user-provided
-  Postgres (DSN Secret). Bundling CloudNativePG would simplify
-  the homelab path but adds a heavy dependency we don't otherwise
-  carry.
-- **External router repo location.** Same org, separate repo?
-  Monorepo `web/` directory? Lean toward separate repo so the
-  release cadence and language tooling don't bleed into the Go
-  operator's CI.
-- **Schema migration: API binary on startup, or one-shot Job?**
-  Startup is simpler but introduces a startup-order dependency
-  (Postgres must be reachable). One-shot Job is cleaner for
-  GitOps but adds operational moving parts. Lean toward startup
-  with retry + readiness gate.
-- **Owner-group membership lookup.** Where does the router get
-  "which owner-groups does this user belong to?" Backstage
-  Catalog API? OIDC token claims? Out of scope for *this*
-  DESIGN; the router repo owns the answer. Internal API only
-  needs the filter to be expressible as `?owner=X` query params.
-- **Webhook dedupe state.** In-memory sliding window per replica
-  works for low-throughput, but two replicas could each create a
-  Run for the same `push`. Acceptable for v0.3.0; revisit with
-  Redis-backed dedupe if it becomes a real problem.
-- **Event payload `outcome` granularity.** v0.2.0 emits one event
-  per (Run, repo). For real-time UIs that want progress, we'd
-  need per-PR events too. Defer until UI demand surfaces.
-- **Force-run authorization** in the API: today the API trusts
-  the router. Should the API record *which user* (via header)
-  triggered a force-run in an audit table? Lean yes; cheap to
-  add and useful for accountability.
+- **TS stub distribution.** UI repo generating against a pinned git
+  tag is the zero-infra default. Buf Schema Registry would give
+  versioned packages + remote plugins; adopt only if tag-pinning
+  chafes.
+- **`WatchRuns` fan-out.** One K8s watch (manager cache) multiplexed
+  to N streaming clients — needs a small broadcast hub. Bound
+  clients (the BFF aggregates browsers; expected N≈BFF replicas).
+- **Force-run audit.** Record which user (BFF-supplied header)
+  triggered a ForceRun in an audit table? Lean yes — cheap, useful;
+  needs the header contract defined with the BFF.
+- **Webhook dedupe across replicas.** In-memory window per replica
+  means two replicas can double-fire. Acceptable at v0.3.0
+  throughput; a shared Valkey (e.g. the worker-cache instance from
+  DESIGN-0005, if deployed) is the obvious shared-window store if
+  it becomes real.
+- **Pagination convention.** Cursor (opaque token) vs. offset for
+  `QueryResults`. Lean cursor from day one — cheap now, painful to
+  retrofit.
 
 ## References
 
-- [DESIGN-0002](0002-renovate-operator-v020.md) — v0.2.x scope
-  decision; places this design as v0.3.0.
+- [DESIGN-0005](0005-operator-state-in-postgres-and-valkey-backed-scheduling.md) —
+  the state this API reads; §Background records why the thin-API
+  layering was kept and the REST/consumer/datastore version of this
+  doc was retired.
+- [DESIGN-0002](0002-renovate-operator-v020.md) — original v0.2.x/
+  v0.3.x scoping (release table superseded by DESIGN-0005).
 - [DESIGN-0003](0003-eventsink-for-renovate-operator-v020.md) —
-  v0.2.0 EventSink; the consumer in this doc is the canonical
-  reader of its stream.
-- [INV-0006](../investigation/0006-operationalizing-renovate-operator-at-scale-dashboard-risk.md) —
-  origin of the "operator emits, doesn't display" cut that put
-  the UI/consumer/DB downstream of EventSink in the first place.
+  outbound EventSink; decoupled from this stack.
 - [RFC-0001 §Phase 2](../rfc/0001-build-kubebuilder-renovate-operator.md) —
-  original webhook commitment; now fulfilled as Component 5.
-- OpenAPI v3.1 spec.
-- Bun / Hono / React / TanStack — proposed router stack (subject
-  to UI repo's final call).
-- CloudNativePG / Crunchy Postgres Operator — sensible in-cluster
-  Postgres options.
-- Backstage catalog model — informs the `ownership` schema the
-  EventSink emits and the API filters on.
+  original webhook commitment; fulfilled as Component 3.
+- [ConnectRPC](https://connectrpc.com) — connect-go, connect-es,
+  otelconnect.
+- [Buf](https://buf.build) — `buf lint`, `buf breaking`,
+  `buf generate`.
+- Backstage catalog model — informs the ownership fields the API
+  filters on.
