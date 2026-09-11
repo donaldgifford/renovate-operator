@@ -78,7 +78,7 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+        uses: goreleaser/goreleaser-action@v7.1.0
         with:
           version: "~> v2"
           args: release --clean
@@ -114,7 +114,7 @@ jobs:
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -173,7 +173,7 @@ jobs:
           ref: ${{ needs.bump-version.outputs.tag }}
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.19.0
 

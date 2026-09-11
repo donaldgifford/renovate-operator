@@ -125,23 +125,21 @@ func BuildMirror(run *v1alpha1.RenovateRun, accessToken string) (*corev1.Secret,
 
 	yes := true
 	dst := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      MirrorName(run.Name),
-			Namespace: run.Namespace,
-			Labels: map[string]string{
-				LabelManaged:                LabelManagedValue,
-				"renovate.fartlab.dev/run":  run.Name,
-				"renovate.fartlab.dev/scan": run.Spec.ScanRef.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         v1alpha1.GroupVersion.String(),
-					Kind:               "RenovateRun",
-					Name:               run.Name,
-					UID:                run.UID,
-					Controller:         &yes,
-					BlockOwnerDeletion: &yes,
-				},
+		Name:      MirrorName(run.Name),
+		Namespace: run.Namespace,
+		Labels: map[string]string{
+			LabelManaged:                LabelManagedValue,
+			"renovate.fartlab.dev/run":  run.Name,
+			"renovate.fartlab.dev/scan": run.Spec.ScanRef.Name,
+		},
+		OwnerReferences: []metav1.OwnerReference{
+			{
+				APIVersion:         v1alpha1.GroupVersion.String(),
+				Kind:               "RenovateRun",
+				Name:               run.Name,
+				UID:                run.UID,
+				Controller:         &yes,
+				BlockOwnerDeletion: &yes,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,

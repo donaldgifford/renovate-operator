@@ -57,7 +57,7 @@ func (c *Client) Discover(ctx context.Context, filter platform.DiscoveryFilter) 
 }
 
 func (c *Client) listOrgRepos(ctx context.Context, owner string) ([]*gitea.Repository, error) {
-	opt := gitea.ListOrgReposOptions{ListOptions: gitea.ListOptions{PageSize: discoverPageSize}}
+	opt := gitea.ListOrgReposOptions{PageSize: discoverPageSize}
 	var all []*gitea.Repository
 	for page := 1; ; page++ {
 		opt.Page = page
@@ -77,7 +77,7 @@ func (c *Client) listOrgRepos(ctx context.Context, owner string) ([]*gitea.Repos
 }
 
 func (c *Client) listUserRepos(ctx context.Context, owner string) ([]*gitea.Repository, error) {
-	opt := gitea.ListReposOptions{ListOptions: gitea.ListOptions{PageSize: discoverPageSize}}
+	opt := gitea.ListReposOptions{PageSize: discoverPageSize}
 	var all []*gitea.Repository
 	for page := 1; ; page++ {
 		opt.Page = page

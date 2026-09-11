@@ -25,7 +25,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -34,12 +33,20 @@ import (
 	"github.com/donaldgifford/renovate-operator/internal/jobspec"
 )
 
+const (
+	testAccessTokenKey = "access-token"
+	testRenovate       = "renovate"
+	testCredsSecret    = "creds"
+	testRenovateImage  = "ghcr.io/renovatebot/renovate:latest"
+	testTokenKey       = "token"
+)
+
 func ghPlatform() v1alpha1.RenovatePlatformSpec {
 	return v1alpha1.RenovatePlatformSpec{
 		PlatformType:  v1alpha1.PlatformTypeGitHub,
 		BaseURL:       "https://api.github.com",
 		PresetRepoRef: "github>donaldgifford/renovate-config",
-		RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+		RenovateImage: testRenovateImage,
 		Auth: v1alpha1.PlatformAuth{
 			GitHubApp: &v1alpha1.GitHubAppAuth{
 				AppID:          12345,
@@ -55,9 +62,9 @@ func forgejoPlatform() v1alpha1.RenovatePlatformSpec {
 	return v1alpha1.RenovatePlatformSpec{
 		PlatformType:  v1alpha1.PlatformTypeForgejo,
 		BaseURL:       "https://forgejo.example.com/api/v1",
-		RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+		RenovateImage: testRenovateImage,
 		Auth: v1alpha1.PlatformAuth{
-			Token: &v1alpha1.TokenAuth{SecretRef: v1alpha1.SecretKeyReference{Name: "forgejo-token", Key: "token"}},
+			Token: &v1alpha1.TokenAuth{SecretRef: v1alpha1.SecretKeyReference{Name: "forgejo-token", Key: testTokenKey}},
 		},
 	}
 }
@@ -76,7 +83,7 @@ func nightlyScan() v1alpha1.RenovateScanSpec {
 
 func ghRun() *v1alpha1.RenovateRun {
 	return &v1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "nightly-20260428", Namespace: "renovate", UID: types.UID("abc-123")},
+		Name: "nightly-20260428", Namespace: testRenovate, UID: types.UID("abc-123"),
 		Spec: v1alpha1.RenovateRunSpec{
 			ScanRef:          v1alpha1.LocalObjectReference{Name: "nightly"},
 			PlatformSnapshot: ghPlatform(),
@@ -87,10 +94,10 @@ func ghRun() *v1alpha1.RenovateRun {
 
 func ghCMAndCred() (*corev1.ConfigMap, jobspec.CredentialMount) {
 	return &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: "nightly-20260428-shards", Namespace: "renovate"},
-			Data:       map[string]string{"shard-0000.json": `{"index":0,"total":1,"repos":["donaldgifford/server-price-tracker"]}`},
+			Name: "nightly-20260428-shards", Namespace: testRenovate,
+			Data: map[string]string{"shard-0000.json": `{"index":0,"total":1,"repos":["donaldgifford/server-price-tracker"]}`},
 		},
-		jobspec.CredentialMount{SecretName: "renovate-creds-nightly-20260428", TokenKey: "access-token"}
+		jobspec.CredentialMount{SecretName: "renovate-creds-nightly-20260428", TokenKey: testAccessTokenKey}
 }
 
 func happyPathJob(t *testing.T) (*batchv1.Job, *corev1.ConfigMap) {
@@ -112,7 +119,7 @@ func TestBuildWorkerJob_GitHub_NameAndOwnership(t *testing.T) {
 	if got, want := job.Name, "nightly-20260428-worker"; got != want {
 		t.Errorf("Job.Name = %q, want %q", got, want)
 	}
-	if job.Namespace != "renovate" {
+	if job.Namespace != testRenovate {
 		t.Errorf("Job.Namespace = %q, want renovate", job.Namespace)
 	}
 	if len(job.OwnerReferences) != 1 || job.OwnerReferences[0].UID != "abc-123" {
@@ -177,10 +184,10 @@ func TestBuildWorkerJob_GitHub_PodAndContainer(t *testing.T) {
 		t.Fatalf("Pod.Containers = %d, want 1", len(pod.Containers))
 	}
 	c := pod.Containers[0]
-	if c.Name != "renovate" {
+	if c.Name != testRenovate {
 		t.Errorf("container Name = %q, want renovate", c.Name)
 	}
-	if c.Image != "ghcr.io/renovatebot/renovate:latest" {
+	if c.Image != testRenovateImage {
 		t.Errorf("container Image = %q", c.Image)
 	}
 	if len(c.Command) != 3 || c.Command[0] != "/bin/sh" || c.Command[1] != "-c" {
@@ -277,7 +284,7 @@ func TestBuildWorkerJob_GitHub_EnvOrdering(t *testing.T) {
 	t.Parallel()
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
-		Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
+		Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: testAccessTokenKey},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -320,7 +327,7 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
 		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1,
-		Credential: jobspec.CredentialMount{SecretName: "creds", TokenKey: "token"},
+		Credential: jobspec.CredentialMount{SecretName: testCredsSecret, TokenKey: testTokenKey},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -337,7 +344,7 @@ func TestBuildWorkerJob_Forgejo(t *testing.T) {
 	if tokenEnv == nil || tokenEnv.ValueFrom == nil || tokenEnv.ValueFrom.SecretKeyRef == nil {
 		t.Fatalf("RENOVATE_TOKEN missing or not SecretKeyRef: %+v", tokenEnv)
 	}
-	if tokenEnv.ValueFrom.SecretKeyRef.Name != "creds" || tokenEnv.ValueFrom.SecretKeyRef.Key != "token" {
+	if tokenEnv.ValueFrom.SecretKeyRef.Name != testCredsSecret || tokenEnv.ValueFrom.SecretKeyRef.Key != testTokenKey {
 		t.Errorf("RENOVATE_TOKEN SecretKeyRef = %+v", tokenEnv.ValueFrom.SecretKeyRef)
 	}
 }
@@ -361,13 +368,13 @@ func TestBuildWorkerJob_AlwaysSetsRenovateToken(t *testing.T) {
 		run.Spec.PlatformSnapshot = forgejoPlatform()
 		job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
 			Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1,
-			Credential: jobspec.CredentialMount{SecretName: "creds", TokenKey: "access-token"},
+			Credential: jobspec.CredentialMount{SecretName: testCredsSecret, TokenKey: testAccessTokenKey},
 		})
 		if err != nil {
 			t.Fatalf("BuildWorkerJob err = %v", err)
 		}
 		env := job.Spec.Template.Spec.Containers[0].Env
-		assertRenovateTokenSourcedFromAccessToken(t, env, "creds")
+		assertRenovateTokenSourcedFromAccessToken(t, env, testCredsSecret)
 	})
 }
 
@@ -425,8 +432,8 @@ func assertRenovateTokenSourcedFromAccessToken(t *testing.T, env []corev1.EnvVar
 	if tokenEnv.ValueFrom.SecretKeyRef.Name != wantSecret {
 		t.Errorf("RENOVATE_TOKEN SecretKeyRef.Name = %q, want %q", tokenEnv.ValueFrom.SecretKeyRef.Name, wantSecret)
 	}
-	if tokenEnv.ValueFrom.SecretKeyRef.Key != "access-token" {
-		t.Errorf("RENOVATE_TOKEN SecretKeyRef.Key = %q, want \"access-token\"", tokenEnv.ValueFrom.SecretKeyRef.Key)
+	if tokenEnv.ValueFrom.SecretKeyRef.Key != testAccessTokenKey {
+		t.Errorf("RENOVATE_TOKEN SecretKeyRef.Key = %q, want %q", tokenEnv.ValueFrom.SecretKeyRef.Key, testAccessTokenKey)
 	}
 }
 
@@ -439,7 +446,7 @@ func TestBuildWorkerJob_ExtraEnvAppendedLast(t *testing.T) {
 	run.Spec.ScanSnapshot = scan
 
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
-		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
+		Run: run, ShardConfigMap: cmFor("a"), ActualWorkers: 1, Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: testAccessTokenKey},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -469,7 +476,7 @@ func TestBuildWorkerJob_Errors(t *testing.T) {
 			t.Parallel()
 			in := jobspec.BuildInput{
 				Run: ghRun(), ShardConfigMap: cmFor("a"), ActualWorkers: 1,
-				Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
+				Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: testAccessTokenKey},
 			}
 			tt.mutate(&in)
 			_, err := jobspec.BuildWorkerJob(in)
@@ -549,7 +556,7 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 		},
 	}
 	run := &v1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "n"},
+		Name: "r", Namespace: "n",
 		Spec: v1alpha1.RenovateRunSpec{
 			ScanRef:          v1alpha1.LocalObjectReference{Name: "s"},
 			PlatformSnapshot: platform,
@@ -558,7 +565,7 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 	}
 	job, err := jobspec.BuildWorkerJob(jobspec.BuildInput{
 		Run: run, ShardConfigMap: cmFor("c"), ActualWorkers: 1,
-		Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: "access-token"},
+		Credential: jobspec.CredentialMount{SecretName: "s", TokenKey: testAccessTokenKey},
 	})
 	if err != nil {
 		t.Fatalf("BuildWorkerJob err = %v", err)
@@ -577,7 +584,7 @@ func TestBuildWorkerJob_NoOptionalFieldsStillBuilds(t *testing.T) {
 // helpers
 
 func cmFor(name string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "renovate"}}
+	return &corev1.ConfigMap{Name: name, Namespace: testRenovate}
 }
 
 func envNames(env []corev1.EnvVar) []string {

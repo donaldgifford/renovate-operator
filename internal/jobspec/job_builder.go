@@ -115,12 +115,10 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 	ttl := defaultJobTTLSeconds
 
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            jobName,
-			Namespace:       in.Run.Namespace,
-			Labels:          labels,
-			OwnerReferences: []metav1.OwnerReference{ownerRefFor(in.Run)},
-		},
+		Name:            jobName,
+		Namespace:       in.Run.Namespace,
+		Labels:          labels,
+		OwnerReferences: []metav1.OwnerReference{ownerRefFor(in.Run)},
 		Spec: batchv1.JobSpec{
 			CompletionMode: &completionMode,
 			//nolint:modernize // ptr.To wraps a runtime value, not a type literal.
@@ -146,10 +144,8 @@ func BuildWorkerJob(in BuildInput) (*batchv1.Job, error) {
 					Volumes: []corev1.Volume{
 						{
 							Name: shardVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: in.ShardConfigMap.Name},
-								},
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								Name: in.ShardConfigMap.Name,
 							},
 						},
 					},

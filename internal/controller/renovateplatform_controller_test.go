@@ -43,18 +43,18 @@ var _ = Describe("RenovatePlatform Controller", func() {
 
 		BeforeEach(func() {
 			By("ensuring the operator namespace exists")
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: operatorTestNamespace}}
+			ns := &corev1.Namespace{Name: operatorTestNamespace}
 			_ = k8sClient.Create(ctx, ns)
 
 			By("creating a token-auth Platform pointing at a Secret in the operator namespace")
 			platform := &renovatev1alpha1.RenovatePlatform{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				Name: resourceName,
 				Spec: renovatev1alpha1.RenovatePlatformSpec{
 					PlatformType: renovatev1alpha1.PlatformTypeForgejo,
-					BaseURL:      "https://forgejo.example.com",
+					BaseURL:      testForgejoBaseURL,
 					Auth: renovatev1alpha1.PlatformAuth{
 						Token: &renovatev1alpha1.TokenAuth{
-							SecretRef: renovatev1alpha1.SecretKeyReference{Name: "platform-creds"},
+							SecretRef: renovatev1alpha1.SecretKeyReference{Name: testPlatformCredsSecret},
 						},
 					},
 				},
@@ -72,7 +72,7 @@ var _ = Describe("RenovatePlatform Controller", func() {
 				Expect(k8sClient.Delete(ctx, p)).To(Succeed())
 			}
 			By("cleanup credential Secret")
-			s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "platform-creds", Namespace: operatorTestNamespace}}
+			s := &corev1.Secret{Name: testPlatformCredsSecret, Namespace: operatorTestNamespace}
 			_ = k8sClient.Delete(ctx, s)
 		})
 
@@ -106,9 +106,9 @@ var _ = Describe("RenovatePlatform Controller", func() {
 
 			By("creating the Secret in the operator namespace")
 			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "platform-creds", Namespace: operatorTestNamespace},
-				Data:       map[string][]byte{"token": []byte("supersecret")},
-				Type:       corev1.SecretTypeOpaque,
+				Name: testPlatformCredsSecret, Namespace: operatorTestNamespace,
+				Data: map[string][]byte{"token": []byte("supersecret")},
+				Type: corev1.SecretTypeOpaque,
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 

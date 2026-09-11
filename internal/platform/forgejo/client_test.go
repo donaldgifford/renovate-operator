@@ -29,6 +29,13 @@ import (
 	"github.com/donaldgifford/renovate-operator/internal/platform/forgejo"
 )
 
+const (
+	testFakeToken     = "fake"
+	testOrgReposRoute = "GET /api/v1/orgs/o/repos"
+	testDefaultBranch = "main"
+	testRepoSlug      = "o/r"
+)
+
 type fakeServer struct {
 	handlers map[string]http.HandlerFunc
 }
@@ -55,7 +62,7 @@ func newClient(t *testing.T, handlers map[string]http.HandlerFunc) *forgejo.Clie
 	t.Cleanup(srv.Close)
 
 	c, err := forgejo.New(
-		forgejo.Auth{BaseURL: srv.URL, Token: "fake"},
+		forgejo.Auth{BaseURL: srv.URL, Token: testFakeToken},
 		forgejo.WithRateLimit(rate.Inf, 1),
 	)
 	if err != nil {
@@ -72,7 +79,7 @@ func TestDiscover_OrgHappyPath(t *testing.T) {
   {"id":2,"name":"b","full_name":"o/b","default_branch":"main","fork":true,"archived":false}
 ]`
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(body))
 		},
 	}
@@ -122,7 +129,7 @@ func TestHasRenovateConfig_FirstHit(t *testing.T) {
 	}
 	c := newClient(t, handlers)
 
-	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: "main"})
+	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: testRepoSlug, DefaultBranch: testDefaultBranch})
 	if err != nil {
 		t.Fatalf("HasRenovateConfig err = %v", err)
 	}
@@ -134,7 +141,7 @@ func TestHasRenovateConfig_FirstHit(t *testing.T) {
 func TestHasRenovateConfig_AllMissing(t *testing.T) {
 	t.Parallel()
 	c := newClient(t, map[string]http.HandlerFunc{})
-	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: "main"})
+	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: testRepoSlug, DefaultBranch: testDefaultBranch})
 	if err != nil {
 		t.Fatalf("HasRenovateConfig err = %v", err)
 	}
@@ -147,7 +154,7 @@ func TestUnauthorizedClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		},
 	}
