@@ -35,7 +35,7 @@ var _ = Describe("RenovateScan Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-scan"
 		const platformName = "scan-test-platform"
-		const namespace = "default"
+		const namespace = testDefaultNamespace
 
 		ctx := context.Background()
 
@@ -44,10 +44,10 @@ var _ = Describe("RenovateScan Controller", func() {
 		BeforeEach(func() {
 			By("creating the parent Platform")
 			platform := &renovatev1alpha1.RenovatePlatform{
-				ObjectMeta: metav1.ObjectMeta{Name: platformName},
+				Name: platformName,
 				Spec: renovatev1alpha1.RenovatePlatformSpec{
 					PlatformType: renovatev1alpha1.PlatformTypeForgejo,
-					BaseURL:      "https://forgejo.example.com",
+					BaseURL:      testForgejoBaseURL,
 					Auth: renovatev1alpha1.PlatformAuth{
 						Token: &renovatev1alpha1.TokenAuth{
 							SecretRef: renovatev1alpha1.SecretKeyReference{Name: "scan-test-creds"},
@@ -62,10 +62,10 @@ var _ = Describe("RenovateScan Controller", func() {
 
 			By("creating the Scan")
 			scan := &renovatev1alpha1.RenovateScan{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: namespace},
+				Name: resourceName, Namespace: namespace,
 				Spec: renovatev1alpha1.RenovateScanSpec{
 					PlatformRef: renovatev1alpha1.LocalObjectReference{Name: platformName},
-					Schedule:    "0 2 * * *",
+					Schedule:    testSchedule2AM,
 				},
 			}
 			err = k8sClient.Get(ctx, scanKey, &renovatev1alpha1.RenovateScan{})
@@ -81,10 +81,10 @@ var _ = Describe("RenovateScan Controller", func() {
 				Expect(k8sClient.Delete(ctx, scan)).To(Succeed())
 			}
 			By("cleanup Platform")
-			p := &renovatev1alpha1.RenovatePlatform{ObjectMeta: metav1.ObjectMeta{Name: platformName}}
+			p := &renovatev1alpha1.RenovatePlatform{Name: platformName}
 			_ = k8sClient.Delete(ctx, p)
 			By("cleanup Secret")
-			s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "scan-test-creds", Namespace: operatorTestNamespace}}
+			s := &corev1.Secret{Name: "scan-test-creds", Namespace: operatorTestNamespace}
 			_ = k8sClient.Delete(ctx, s)
 		})
 

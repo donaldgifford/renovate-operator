@@ -21,16 +21,17 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	v1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 	"github.com/donaldgifford/renovate-operator/internal/credentials"
 )
 
+const testNamespace = "renovate"
+
 func ghAppRun(keyOverride string) *v1alpha1.RenovateRun {
 	return &v1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "nightly-1", Namespace: "renovate", UID: types.UID("uid-1")},
+		Name: "nightly-1", Namespace: testNamespace, UID: types.UID("uid-1"),
 		Spec: v1alpha1.RenovateRunSpec{
 			ScanRef: v1alpha1.LocalObjectReference{Name: "nightly"},
 			PlatformSnapshot: v1alpha1.RenovatePlatformSpec{
@@ -49,7 +50,7 @@ func ghAppRun(keyOverride string) *v1alpha1.RenovateRun {
 
 func tokenRun(keyOverride string) *v1alpha1.RenovateRun {
 	return &v1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "nightly-2", Namespace: "renovate", UID: types.UID("uid-2")},
+		Name: "nightly-2", Namespace: testNamespace, UID: types.UID("uid-2"),
 		Spec: v1alpha1.RenovateRunSpec{
 			ScanRef: v1alpha1.LocalObjectReference{Name: "forgejo-nightly"},
 			PlatformSnapshot: v1alpha1.RenovatePlatformSpec{
@@ -150,7 +151,7 @@ func TestBuildMirror_GitHubApp(t *testing.T) {
 	if got.Name != "renovate-creds-nightly-1" {
 		t.Errorf("Name = %q", got.Name)
 	}
-	if got.Namespace != "renovate" {
+	if got.Namespace != testNamespace {
 		t.Errorf("Namespace = %q (should be Run's namespace)", got.Namespace)
 	}
 	if got.Labels[credentials.LabelManaged] != credentials.LabelManagedValue {

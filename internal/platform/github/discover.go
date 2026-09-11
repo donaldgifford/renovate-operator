@@ -111,7 +111,7 @@ func (c *Client) listInstallationRepos(ctx context.Context, owner string) ([]*go
 }
 
 func (c *Client) listOrgRepos(ctx context.Context, owner string) ([]*gogithub.Repository, error) {
-	opt := &gogithub.RepositoryListByOrgOptions{ListOptions: gogithub.ListOptions{PerPage: discoverPageSize}}
+	opt := &gogithub.RepositoryListByOrgOptions{PerPage: discoverPageSize}
 	var all []*gogithub.Repository
 	for {
 		if err := c.wait(ctx); err != nil {
@@ -131,7 +131,7 @@ func (c *Client) listOrgRepos(ctx context.Context, owner string) ([]*gogithub.Re
 }
 
 func (c *Client) listUserRepos(ctx context.Context, owner string) ([]*gogithub.Repository, error) {
-	opt := &gogithub.RepositoryListByUserOptions{ListOptions: gogithub.ListOptions{PerPage: discoverPageSize}}
+	opt := &gogithub.RepositoryListByUserOptions{PerPage: discoverPageSize}
 	var all []*gogithub.Repository
 	for {
 		if err := c.wait(ctx); err != nil {

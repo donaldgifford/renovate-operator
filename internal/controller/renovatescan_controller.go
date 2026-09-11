@@ -312,26 +312,24 @@ func isTerminal(p renovatev1alpha1.RunPhase) bool {
 func (r *RenovateScanReconciler) createRun(ctx context.Context, scan *renovatev1alpha1.RenovateScan, platform *renovatev1alpha1.RenovatePlatform, fireTime time.Time) error {
 	yes := true
 	run := &renovatev1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:    scan.Namespace,
-			GenerateName: scan.Name + "-",
-			Labels: map[string]string{
-				"renovate.fartlab.dev/scan":     scan.Name,
-				"renovate.fartlab.dev/platform": string(platform.Spec.PlatformType),
+		Namespace:    scan.Namespace,
+		GenerateName: scan.Name + "-",
+		Labels: map[string]string{
+			"renovate.fartlab.dev/scan":     scan.Name,
+			"renovate.fartlab.dev/platform": string(platform.Spec.PlatformType),
+		},
+		OwnerReferences: []metav1.OwnerReference{
+			{
+				APIVersion:         renovatev1alpha1.GroupVersion.String(),
+				Kind:               "RenovateScan",
+				Name:               scan.Name,
+				UID:                scan.UID,
+				Controller:         &yes,
+				BlockOwnerDeletion: &yes,
 			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         renovatev1alpha1.GroupVersion.String(),
-					Kind:               "RenovateScan",
-					Name:               scan.Name,
-					UID:                scan.UID,
-					Controller:         &yes,
-					BlockOwnerDeletion: &yes,
-				},
-			},
-			Annotations: map[string]string{
-				"renovate.fartlab.dev/scheduled-for": fireTime.Format(time.RFC3339),
-			},
+		},
+		Annotations: map[string]string{
+			"renovate.fartlab.dev/scheduled-for": fireTime.Format(time.RFC3339),
 		},
 		Spec: renovatev1alpha1.RenovateRunSpec{
 			ScanRef:          renovatev1alpha1.LocalObjectReference{Name: scan.Name},
@@ -457,7 +455,7 @@ func (r *RenovateScanReconciler) scansForPlatform(ctx context.Context, obj clien
 	out := make([]reconcile.Request, 0)
 	for _, s := range list.Items {
 		if s.Spec.PlatformRef.Name == platform.Name {
-			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: s.Namespace, Name: s.Name}})
+			out = append(out, reconcile.Request{Namespace: s.Namespace, Name: s.Name})
 		}
 	}
 	return out

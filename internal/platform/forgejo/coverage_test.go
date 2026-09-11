@@ -44,7 +44,7 @@ func TestNew_WithHTTPClientOption(t *testing.T) {
 
 	hc := &http.Client{Transport: http.DefaultTransport}
 	c, err := forgejo.New(
-		forgejo.Auth{BaseURL: srv.URL, Token: "fake"},
+		forgejo.Auth{BaseURL: srv.URL, Token: testFakeToken},
 		forgejo.WithRateLimit(rate.Inf, 1),
 		forgejo.WithHTTPClient(hc),
 	)
@@ -68,7 +68,7 @@ func TestNew_TrailingSlashStripped(t *testing.T) {
 
 	// Trailing slash is harmless; gitea.NewClient still constructs cleanly.
 	if _, err := forgejo.New(
-		forgejo.Auth{BaseURL: srv.URL + "/", Token: "fake"},
+		forgejo.Auth{BaseURL: srv.URL + "/", Token: testFakeToken},
 		forgejo.WithRateLimit(rate.Inf, 1),
 	); err != nil {
 		t.Fatalf("New with trailing slash: %v", err)
@@ -100,7 +100,7 @@ func TestDiscover_NotFoundClassified(t *testing.T) {
 func TestDiscover_ServerErrorIsTransient(t *testing.T) {
 	t.Parallel()
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "boom", http.StatusServiceUnavailable)
 		},
 	}
@@ -117,7 +117,7 @@ func TestDiscover_ServerErrorIsTransient(t *testing.T) {
 func TestDiscover_RateLimitedClassified(t *testing.T) {
 	t.Parallel()
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "slow down", http.StatusTooManyRequests)
 		},
 	}
@@ -126,8 +126,7 @@ func TestDiscover_RateLimitedClassified(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil")
 	}
-	var rle *platform.RateLimitedError
-	if !errors.As(err, &rle) {
+	if _, ok := errors.AsType[*platform.RateLimitedError](err); !ok {
 		t.Errorf("err = %v, want *RateLimitedError", err)
 	}
 }
@@ -135,7 +134,7 @@ func TestDiscover_RateLimitedClassified(t *testing.T) {
 func TestDiscover_PatternFilterMatches(t *testing.T) {
 	t.Parallel()
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`[
 				{"id":1,"full_name":"o/keep","fork":false,"archived":false,"default_branch":"main"},
 				{"id":2,"full_name":"o/drop","fork":false,"archived":false,"default_branch":"main"}
@@ -173,7 +172,7 @@ func TestHasRenovateConfig_PermanentErrorPropagates(t *testing.T) {
 	}
 	c := newClient(t, handlers)
 	_, err := c.HasRenovateConfig(context.Background(),
-		platform.Repository{Slug: "o/r", DefaultBranch: "main"})
+		platform.Repository{Slug: testRepoSlug, DefaultBranch: testDefaultBranch})
 	if err == nil {
 		t.Fatal("err = nil")
 	}
@@ -190,7 +189,7 @@ func TestHasRenovateConfig_PermanentErrorPropagates(t *testing.T) {
 func TestDiscover_UnexpectedStatusIsPermanent(t *testing.T) {
 	t.Parallel()
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "unprocessable", http.StatusUnprocessableEntity)
 		},
 	}
@@ -215,7 +214,7 @@ func TestDiscover_NetworkErrorIsTransient(t *testing.T) {
 	}))
 
 	c, err := forgejo.New(
-		forgejo.Auth{BaseURL: srv.URL, Token: "fake"},
+		forgejo.Auth{BaseURL: srv.URL, Token: testFakeToken},
 		forgejo.WithRateLimit(rate.Inf, 1),
 	)
 	if err != nil {

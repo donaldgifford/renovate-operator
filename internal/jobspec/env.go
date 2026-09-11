@@ -157,8 +157,8 @@ func buildAuthEnv(platform v1alpha1.RenovatePlatformSpec, cred CredentialMount) 
 			Name: envRenovateToken,
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: cred.SecretName},
-					Key:                  cred.TokenKey,
+					Name: cred.SecretName,
+					Key:  cred.TokenKey,
 				},
 			},
 		},

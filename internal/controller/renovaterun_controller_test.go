@@ -25,7 +25,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -37,7 +36,7 @@ import (
 var _ = Describe("RenovateRun Controller", func() {
 	Context("When reconciling a resource", func() {
 		const runName = "test-run"
-		const namespace = "default"
+		const namespace = testDefaultNamespace
 
 		ctx := context.Background()
 		runKey := types.NamespacedName{Name: runName, Namespace: namespace}
@@ -45,23 +44,23 @@ var _ = Describe("RenovateRun Controller", func() {
 		BeforeEach(func() {
 			By("creating a minimal Run snapshot")
 			run := &renovatev1alpha1.RenovateRun{
-				ObjectMeta: metav1.ObjectMeta{Name: runName, Namespace: namespace},
+				Name: runName, Namespace: namespace,
 				Spec: renovatev1alpha1.RenovateRunSpec{
-					ScanRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+					ScanRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
 					PlatformSnapshot: renovatev1alpha1.RenovatePlatformSpec{
 						PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-						RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+						RenovateImage: testRenovateImage,
 						Auth: renovatev1alpha1.PlatformAuth{
 							GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 								AppID:          1,
 								InstallationID: 1,
-								PrivateKeyRef:  renovatev1alpha1.SecretKeyReference{Name: "creds"},
+								PrivateKeyRef:  renovatev1alpha1.SecretKeyReference{Name: testCredsSecretName},
 							},
 						},
 					},
 					ScanSnapshot: renovatev1alpha1.RenovateScanSpec{
-						PlatformRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
-						Schedule:    "0 2 * * *",
+						PlatformRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
+						Schedule:    testSchedule2AM,
 					},
 				},
 			}
@@ -89,18 +88,18 @@ var _ = Describe("RenovateRun Controller", func() {
 			// Use a unique run name + namespace so the no-op spec's BeforeEach
 			// can't share state with this spec via envtest's slow Delete.
 			const happyRunName = "happy-run"
-			const happyNS = "default"
+			const happyNS = testDefaultNamespace
 			happyKey := types.NamespacedName{Name: happyRunName, Namespace: happyNS}
 
 			By("ensuring the operator namespace exists")
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: operatorTestNamespace}}
+			ns := &corev1.Namespace{Name: operatorTestNamespace}
 			_ = k8sClient.Create(ctx, ns)
 
 			By("creating the source credential Secret")
 			src := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "happy-creds", Namespace: operatorTestNamespace},
+				Name: "happy-creds", Namespace: operatorTestNamespace,
 				Data: map[string][]byte{
-					"private-key.pem": []byte("-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"),
+					defaultGitHubAppPEMKey: []byte("-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"),
 				},
 			}
 			Expect(k8sClient.Create(ctx, src)).To(Succeed())
@@ -110,12 +109,12 @@ var _ = Describe("RenovateRun Controller", func() {
 
 			By("creating a fresh Run snapshot (own name, own credential ref)")
 			happyRun := &renovatev1alpha1.RenovateRun{
-				ObjectMeta: metav1.ObjectMeta{Name: happyRunName, Namespace: happyNS},
+				Name: happyRunName, Namespace: happyNS,
 				Spec: renovatev1alpha1.RenovateRunSpec{
-					ScanRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+					ScanRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
 					PlatformSnapshot: renovatev1alpha1.RenovatePlatformSpec{
 						PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-						RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+						RenovateImage: testRenovateImage,
 						Auth: renovatev1alpha1.PlatformAuth{
 							GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 								AppID: 1, InstallationID: 1,
@@ -124,8 +123,8 @@ var _ = Describe("RenovateRun Controller", func() {
 						},
 					},
 					ScanSnapshot: renovatev1alpha1.RenovateScanSpec{
-						PlatformRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
-						Schedule:    "0 2 * * *",
+						PlatformRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
+						Schedule:    testSchedule2AM,
 					},
 				},
 			}

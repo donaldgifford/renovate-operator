@@ -228,7 +228,7 @@ func (r *RenovatePlatformReconciler) platformsForSecret(ctx context.Context, obj
 		if err != nil || name != secret.Name {
 			continue
 		}
-		out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: p.Name}})
+		out = append(out, reconcile.Request{Name: p.Name})
 	}
 	return out
 }
