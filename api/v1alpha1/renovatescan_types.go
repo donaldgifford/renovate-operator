@@ -74,6 +74,11 @@ type RenovateScanSpec struct {
 	// +optional
 	ExtraEnv []corev1.EnvVar `json:"extraEnv,omitempty"`
 
+	// LogLevel overrides the Platform's LogLevel (or the "info" fallback) for
+	// this Scan's worker pods. Forwarded as the LOG_LEVEL env var.
+	// +optional
+	LogLevel *LogLevel `json:"logLevel,omitempty"`
+
 	// Resources sets the worker container's resource requests and limits.
 	// Falls back to chart defaults when nil.
 	// +optional

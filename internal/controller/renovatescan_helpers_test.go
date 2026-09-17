@@ -41,12 +41,12 @@ func TestParseSchedule_Variants(t *testing.T) {
 		wantTZ  string
 		wantErr bool
 	}{
-		{name: "weekly_utc_default", expr: "0 4 * * 0", tz: "", wantTZ: "UTC"},
-		{name: "every_minute_explicit_utc", expr: "* * * * *", tz: "UTC", wantTZ: "UTC"},
+		{name: "weekly_utc_default", expr: "0 4 * * 0", tz: "", wantTZ: testUTCTimeZone},
+		{name: "every_minute_explicit_utc", expr: "* * * * *", tz: testUTCTimeZone, wantTZ: testUTCTimeZone},
 		{name: "every_minute_la", expr: "* * * * *", tz: "America/Los_Angeles", wantTZ: "America/Los_Angeles"},
 		{name: "invalid_tz", expr: "0 4 * * 0", tz: "Mars/Olympus", wantErr: true},
-		{name: "invalid_cron", expr: "@every 1h", tz: "UTC", wantErr: true}, // 5-field parser doesn't support @every
-		{name: "missing_field", expr: "0 4 * *", tz: "UTC", wantErr: true},
+		{name: "invalid_cron", expr: "@every 1h", tz: testUTCTimeZone, wantErr: true}, // 5-field parser doesn't support @every
+		{name: "missing_field", expr: "0 4 * *", tz: testUTCTimeZone, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestParseSchedule_Variants(t *testing.T) {
 
 func TestComputeFireTimes_NoLastRun(t *testing.T) {
 	t.Parallel()
-	loc, sched, err := parseSchedule("0 4 * * *", "UTC") // daily at 04:00 UTC
+	loc, sched, err := parseSchedule("0 4 * * *", testUTCTimeZone) // daily at 04:00 UTC
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestComputeFireTimes_NoLastRun(t *testing.T) {
 // capture that boundary as a missed fire instead of skipping it forever.
 func TestComputeFireTimes_NoLastRunPastBoundary(t *testing.T) {
 	t.Parallel()
-	loc, sched, err := parseSchedule("*/5 * * * *", "UTC")
+	loc, sched, err := parseSchedule("*/5 * * * *", testUTCTimeZone)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestComputeFireTimes_NoLastRunPastBoundary(t *testing.T) {
 // must not fire today's 00:00 boundary 12 hours after the fact.
 func TestComputeFireTimes_NoLastRunFarPastBoundary(t *testing.T) {
 	t.Parallel()
-	loc, sched, err := parseSchedule("0 0 * * *", "UTC") // daily at 00:00 UTC
+	loc, sched, err := parseSchedule("0 0 * * *", testUTCTimeZone) // daily at 00:00 UTC
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestComputeFireTimes_NoLastRunFarPastBoundary(t *testing.T) {
 
 func TestComputeFireTimes_LastRunWithMissed(t *testing.T) {
 	t.Parallel()
-	loc, sched, err := parseSchedule("0 4 * * *", "UTC")
+	loc, sched, err := parseSchedule("0 4 * * *", testUTCTimeZone)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -221,8 +221,8 @@ func TestCompletionOrCreation_PrefersCompletion(t *testing.T) {
 	t.Parallel()
 	created := metav1.NewTime(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
 	completed := metav1.NewTime(time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC))
-	run := renovatev1alpha1.RenovateRun{}
-	run.CreationTimestamp = created
+	run := renovatev1alpha1.RenovateRun{
+		CreationTimestamp: created}
 	run.Status.CompletionTime = &completed
 	got := completionOrCreation(run)
 	if !got.Equal(completed.Time) {
@@ -233,8 +233,8 @@ func TestCompletionOrCreation_PrefersCompletion(t *testing.T) {
 func TestCompletionOrCreation_FallsBackToCreation(t *testing.T) {
 	t.Parallel()
 	created := metav1.NewTime(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
-	run := renovatev1alpha1.RenovateRun{}
-	run.CreationTimestamp = created
+	run := renovatev1alpha1.RenovateRun{
+		CreationTimestamp: created}
 	got := completionOrCreation(run)
 	if !got.Equal(created.Time) {
 		t.Errorf("got %v, want %v (creation)", got, created.Time)

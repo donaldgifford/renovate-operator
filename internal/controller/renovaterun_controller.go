@@ -468,13 +468,11 @@ func (r *RenovateRunReconciler) ensureShardConfigMap(ctx context.Context, run *r
 	}
 
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      run.Name + "-shards",
-			Namespace: run.Namespace,
-			Labels:    jobspec.WorkerLabels(run),
-			OwnerReferences: []metav1.OwnerReference{
-				ownerRefForRun(run),
-			},
+		Name:      run.Name + "-shards",
+		Namespace: run.Namespace,
+		Labels:    jobspec.WorkerLabels(run),
+		OwnerReferences: []metav1.OwnerReference{
+			ownerRefForRun(run),
 		},
 		Data: result.Data,
 	}

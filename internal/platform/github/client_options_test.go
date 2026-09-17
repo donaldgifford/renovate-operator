@@ -173,7 +173,7 @@ func TestNewWithToken_HappyPath_DiscoverWorks(t *testing.T) {
 		t.Fatalf("NewWithToken: %v", err)
 	}
 
-	repos, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	repos, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: testGitHubOwner})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

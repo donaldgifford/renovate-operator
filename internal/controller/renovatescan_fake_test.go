@@ -72,14 +72,14 @@ func newScanReconciler(t *testing.T, now time.Time, objs ...client.Object) *Reno
 //nolint:unparam // intentional flexibility for future test additions
 func mkPlatform(name string, ready bool) *renovatev1alpha1.RenovatePlatform {
 	p := &renovatev1alpha1.RenovatePlatform{
-		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("plat-" + name)},
+		Name: name, UID: types.UID("plat-" + name),
 		Spec: renovatev1alpha1.RenovatePlatformSpec{
 			PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-			RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+			RenovateImage: testRenovateImage,
 			Auth: renovatev1alpha1.PlatformAuth{
 				GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 					AppID: 1, InstallationID: 1,
-					PrivateKeyRef: renovatev1alpha1.SecretKeyReference{Name: "creds"},
+					PrivateKeyRef: renovatev1alpha1.SecretKeyReference{Name: testCredsSecretName},
 				},
 			},
 		},
@@ -93,14 +93,12 @@ func mkPlatform(name string, ready bool) *renovatev1alpha1.RenovatePlatform {
 
 func mkScan(name, ns, platformName, schedule string) *renovatev1alpha1.RenovateScan {
 	return &renovatev1alpha1.RenovateScan{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name, Namespace: ns,
-			UID: types.UID("scan-" + name),
-		},
+		Name: name, Namespace: ns,
+		UID: types.UID("scan-" + name),
 		Spec: renovatev1alpha1.RenovateScanSpec{
 			PlatformRef: renovatev1alpha1.LocalObjectReference{Name: platformName},
 			Schedule:    schedule,
-			TimeZone:    "UTC",
+			TimeZone:    testUTCTimeZone,
 			Workers: renovatev1alpha1.WorkersSpec{
 				MinWorkers: 1, MaxWorkers: 5, ReposPerWorker: 50,
 			},
@@ -115,7 +113,7 @@ func TestScanReconcile_PlatformNotFoundRequeues(t *testing.T) {
 	r := newScanReconciler(t, now, scan)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -143,7 +141,7 @@ func TestScanReconcile_PlatformNotReadyRequeues(t *testing.T) {
 	r := newScanReconciler(t, now, scan, plat)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -160,7 +158,7 @@ func TestScanReconcile_SuspendShortCircuits(t *testing.T) {
 	r := newScanReconciler(t, now, scan)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -185,7 +183,7 @@ func TestScanReconcile_InvalidScheduleMarksFailed(t *testing.T) {
 	r := newScanReconciler(t, now, scan, plat)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -210,7 +208,7 @@ func TestScanReconcile_FiresMissedAndCreatesRun(t *testing.T) {
 	r := newScanReconciler(t, now, scan, plat)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -242,19 +240,17 @@ func TestScanReconcile_ConcurrencyForbidSkipsCreate(t *testing.T) {
 	scan.Spec.ConcurrencyPolicy = renovatev1alpha1.ForbidConcurrent
 	scan.Status.LastRunTime = &metav1.Time{Time: time.Date(2026, 4, 23, 4, 0, 0, 0, time.UTC)}
 	scan.Status.ActiveRuns = []corev1.ObjectReference{
-		{Kind: "RenovateRun", Name: "in-flight", Namespace: scan.Namespace},
+		{Kind: "RenovateRun", Name: testInFlightRunName, Namespace: scan.Namespace},
 	}
 
 	plat := mkPlatform("github", true)
 	// Pre-existing in-flight run so refreshActiveRuns keeps it active.
 	yes := true
 	inflight := &renovatev1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "in-flight", Namespace: scan.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: "RenovateScan",
-					Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
-			},
+		Name: testInFlightRunName, Namespace: scan.Namespace,
+		OwnerReferences: []metav1.OwnerReference{
+			{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: testRenovateScanKind,
+				Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
 		},
 		Spec: renovatev1alpha1.RenovateRunSpec{
 			ScanRef:          renovatev1alpha1.LocalObjectReference{Name: scan.Name},
@@ -267,7 +263,7 @@ func TestScanReconcile_ConcurrencyForbidSkipsCreate(t *testing.T) {
 	r := newScanReconciler(t, now, scan, plat, inflight)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -285,7 +281,7 @@ func TestScanReconcile_NotFoundIsIgnored(t *testing.T) {
 	t.Parallel()
 	r := newScanReconciler(t, time.Now())
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "x", Name: "ghost"}})
+		reconcile.Request{Namespace: "x", Name: "ghost"})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v, want nil", err)
 	}
@@ -302,23 +298,21 @@ func TestRefreshActiveRuns_FiltersTerminalRuns(t *testing.T) {
 	yes := true
 	mk := func(name string, phase renovatev1alpha1.RunPhase, completion *time.Time) *renovatev1alpha1.RenovateRun {
 		run := &renovatev1alpha1.RenovateRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: scan.Namespace,
-				UID: types.UID("run-" + name),
-				OwnerReferences: []metav1.OwnerReference{
-					{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: "RenovateScan",
-						Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
-				},
+			Name: name, Namespace: scan.Namespace,
+			UID: types.UID("run-" + name),
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: testRenovateScanKind,
+					Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
 			},
 			Spec: renovatev1alpha1.RenovateRunSpec{
 				ScanRef: renovatev1alpha1.LocalObjectReference{Name: scan.Name},
 				PlatformSnapshot: renovatev1alpha1.RenovatePlatformSpec{
 					PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-					RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+					RenovateImage: testRenovateImage,
 					Auth: renovatev1alpha1.PlatformAuth{
 						GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 							AppID: 1, InstallationID: 1,
-							PrivateKeyRef: renovatev1alpha1.SecretKeyReference{Name: "creds"},
+							PrivateKeyRef: renovatev1alpha1.SecretKeyReference{Name: testCredsSecretName},
 						},
 					},
 				},
@@ -365,14 +359,12 @@ func TestGCOldRuns_TrimsToHistoryLimits(t *testing.T) {
 	mk := func(name string, phase renovatev1alpha1.RunPhase, age time.Duration) *renovatev1alpha1.RenovateRun {
 		t := now.Add(-age)
 		return &renovatev1alpha1.RenovateRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: scan.Namespace,
-				UID:               types.UID("run-" + name),
-				CreationTimestamp: metav1.Time{Time: t},
-				OwnerReferences: []metav1.OwnerReference{
-					{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: "RenovateScan",
-						Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
-				},
+			Name: name, Namespace: scan.Namespace,
+			UID:               types.UID("run-" + name),
+			CreationTimestamp: metav1.Time{Time: t},
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: testRenovateScanKind,
+					Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
 			},
 			Status: renovatev1alpha1.RenovateRunStatus{
 				Phase:          phase,
@@ -464,7 +456,7 @@ func TestScanReconcile_StatusConflictRequeues(t *testing.T) {
 	t.Parallel()
 	scan := mkScan("conflict", "team-ns", "missing", "0 4 * * *")
 	conflict := apierrors.NewConflict(
-		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovatescans"},
+		schema.GroupResource{Group: testAPIGroupDomain, Resource: "renovatescans"},
 		scan.Name,
 		fmt.Errorf("optimistic concurrency"),
 	)
@@ -476,7 +468,7 @@ func TestScanReconcile_StatusConflictRequeues(t *testing.T) {
 	}, scan)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
 	}
@@ -496,7 +488,7 @@ func TestScanReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 	}, scan)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}})
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name})
 	if err == nil {
 		t.Fatal("Reconcile err = nil, want propagated update error")
 	}

@@ -26,7 +26,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -99,26 +98,24 @@ func newRunScheme(t *testing.T) *runtime.Scheme {
 //nolint:unparam // ns/opNS are intentionally fixed across this test file
 func runFixture(name, ns, opNS string) (*renovatev1alpha1.RenovateRun, *corev1.Secret) {
 	run := &renovatev1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-			UID:       types.UID("run-" + name),
-		},
+		Name:      name,
+		Namespace: ns,
+		UID:       types.UID("run-" + name),
 		Spec: renovatev1alpha1.RenovateRunSpec{
-			ScanRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+			ScanRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
 			PlatformSnapshot: renovatev1alpha1.RenovatePlatformSpec{
 				PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-				RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+				RenovateImage: testRenovateImage,
 				Auth: renovatev1alpha1.PlatformAuth{
 					GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 						AppID:          1,
 						InstallationID: 1,
-						PrivateKeyRef:  renovatev1alpha1.SecretKeyReference{Name: "creds"},
+						PrivateKeyRef:  renovatev1alpha1.SecretKeyReference{Name: testCredsSecretName},
 					},
 				},
 			},
 			ScanSnapshot: renovatev1alpha1.RenovateScanSpec{
-				PlatformRef: renovatev1alpha1.LocalObjectReference{Name: "scan"},
+				PlatformRef: renovatev1alpha1.LocalObjectReference{Name: testScanName},
 				Schedule:    "0 4 * * *",
 				Workers: renovatev1alpha1.WorkersSpec{
 					MinWorkers:     1,
@@ -135,12 +132,10 @@ func runFixture(name, ns, opNS string) (*renovatev1alpha1.RenovateRun, *corev1.S
 	}
 
 	src := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "creds",
-			Namespace: opNS,
-		},
+		Name:      testCredsSecretName,
+		Namespace: opNS,
 		Data: map[string][]byte{
-			"private-key.pem": []byte("-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"),
+			defaultGitHubAppPEMKey: []byte("-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"),
 		},
 	}
 	return run, src
@@ -159,7 +154,7 @@ func newRunReconciler(t *testing.T, plat platform.Client, objs ...client.Object)
 		Client:            cli,
 		Scheme:            scheme,
 		Clock:             clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
-		OperatorNamespace: "renovate-system",
+		OperatorNamespace: operatorTestNamespace,
 		PlatformClientFactory: func(_ context.Context, _ renovatev1alpha1.RenovatePlatformSpec, _ *corev1.Secret) (platform.Client, error) {
 			return plat, nil
 		},
@@ -168,17 +163,17 @@ func newRunReconciler(t *testing.T, plat platform.Client, objs ...client.Object)
 
 func TestRunReconcile_DiscoverAndDispatch_HappyPath(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("happy", "team-ns", "renovate-system")
+	run, src := runFixture("happy", "team-ns", operatorTestNamespace)
 	plat := &stubPlatformClient{
 		repos: []platform.Repository{
-			{Slug: "team-ns/repo-a"},
+			{Slug: testRepoSlugRepoA},
 			{Slug: "team-ns/repo-b"},
 		},
 	}
 	r := newRunReconciler(t, plat, run, src)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -222,12 +217,12 @@ func TestRunReconcile_DiscoverAndDispatch_HappyPath(t *testing.T) {
 
 func TestRunReconcile_NoReposMatchedMarksFailed(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("empty", "team-ns", "renovate-system")
+	run, src := runFixture("empty", "team-ns", operatorTestNamespace)
 	plat := &stubPlatformClient{repos: nil}
 	r := newRunReconciler(t, plat, run, src)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -242,12 +237,12 @@ func TestRunReconcile_NoReposMatchedMarksFailed(t *testing.T) {
 
 func TestRunReconcile_DiscoverTransientErrorRequeues(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("transient", "team-ns", "renovate-system")
+	run, src := runFixture("transient", "team-ns", operatorTestNamespace)
 	plat := &stubPlatformClient{discoverErr: platform.ErrTransient}
 	r := newRunReconciler(t, plat, run, src)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -265,17 +260,17 @@ func TestRunReconcile_DiscoverTransientErrorRequeues(t *testing.T) {
 
 func TestRunReconcile_RequireConfigFiltersRepos(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("filter", "team-ns", "renovate-system")
+	run, src := runFixture("filter", "team-ns", operatorTestNamespace)
 	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
 	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
-		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
+		repos:     []platform.Repository{{Slug: testRepoSlugRepoA}},
 		hasConfig: true,
 	}
 	r := newRunReconciler(t, plat, run, src)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -292,7 +287,7 @@ func TestRunReconcile_Parallelism_200ReposCapsAtMaxWorkers(t *testing.T) {
 	// 200 repos / 50 reposPerWorker = 4 workers, well under maxWorkers=5.
 	// IMPL-0001 Phase 7 parallelism scenario: actualWorkers == 4, the shard
 	// ConfigMap holds all 200, Job parallelism == 4.
-	run, src := runFixture("parallelism", "team-ns", "renovate-system")
+	run, src := runFixture("parallelism", "team-ns", operatorTestNamespace)
 	run.Spec.ScanSnapshot.Workers = renovatev1alpha1.WorkersSpec{
 		MinWorkers:     1,
 		MaxWorkers:     5,
@@ -307,7 +302,7 @@ func TestRunReconcile_Parallelism_200ReposCapsAtMaxWorkers(t *testing.T) {
 	r := newRunReconciler(t, plat, run, src)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -349,7 +344,7 @@ func TestRunReconcile_Parallelism_200ReposCapsAtMaxWorkers(t *testing.T) {
 func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
 	t.Parallel()
 	// 10 repos / 50 reposPerWorker = 1 worker by ceil; minWorkers=2 lifts to 2.
-	run, src := runFixture("min-clamp", "team-ns", "renovate-system")
+	run, src := runFixture("min-clamp", "team-ns", operatorTestNamespace)
 	run.Spec.ScanSnapshot.Workers = renovatev1alpha1.WorkersSpec{
 		MinWorkers:     2,
 		MaxWorkers:     5,
@@ -363,7 +358,7 @@ func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
 	r := newRunReconciler(t, plat, run, src)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 	got := &renovatev1alpha1.RenovateRun{}
@@ -376,17 +371,17 @@ func TestRunReconcile_Parallelism_BelowMinClampsUp(t *testing.T) {
 
 func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("skip", "team-ns", "renovate-system")
+	run, src := runFixture("skip", "team-ns", operatorTestNamespace)
 	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
 	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
-		repos:     []platform.Repository{{Slug: "team-ns/repo-a"}},
+		repos:     []platform.Repository{{Slug: testRepoSlugRepoA}},
 		hasConfig: false,
 	}
 	r := newRunReconciler(t, plat, run, src)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -404,17 +399,17 @@ func TestRunReconcile_RequireConfigSkipsReposWithoutRenovateJSON(t *testing.T) {
 // classifies it correctly (transient -> requeue, not flip-to-Failed).
 func TestRunReconcile_RequireConfigHasConfigErrorPropagates(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("config-err", "team-ns", "renovate-system")
+	run, src := runFixture("config-err", "team-ns", operatorTestNamespace)
 	//nolint:modernize // ptr.To(true) is the only correct form here; new(bool) would yield *bool->false.
 	run.Spec.ScanSnapshot.Discovery.RequireConfig = ptr.To(true)
 	plat := &stubPlatformClient{
-		repos:     []platform.Repository{{Slug: "team-ns/a"}, {Slug: "team-ns/b"}},
+		repos:     []platform.Repository{{Slug: testRepoSlugA}, {Slug: "team-ns/b"}},
 		configErr: platform.ErrTransient,
 	}
 	r := newRunReconciler(t, plat, run, src)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -432,13 +427,13 @@ func TestRunReconcile_RequireConfigHasConfigErrorPropagates(t *testing.T) {
 
 func TestRunReconcile_MissingSourceSecretRequeues(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("missing-secret", "team-ns", "renovate-system")
+	run, _ := runFixture("missing-secret", "team-ns", operatorTestNamespace)
 	plat := &stubPlatformClient{repos: []platform.Repository{{Slug: "x/y"}}}
 	// Note: no src Secret in the fake client.
 	r := newRunReconciler(t, plat, run)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -449,22 +444,22 @@ func TestRunReconcile_MissingSourceSecretRequeues(t *testing.T) {
 
 func TestObserveJob_TransitionsToSucceeded(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("running", "team-ns", "renovate-system")
+	run, _ := runFixture("running", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseRunning
 	run.Status.WorkerJobRef = &corev1.ObjectReference{
-		APIVersion: "batch/v1", Kind: "Job",
+		APIVersion: testBatchAPIVersion, Kind: testJobKind,
 		Namespace: run.Namespace, Name: "running-workers",
 	}
 	completions := int32(2)
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "running-workers", Namespace: run.Namespace},
-		Spec:       batchv1.JobSpec{Completions: &completions},
-		Status:     batchv1.JobStatus{Succeeded: 2},
+		Name: "running-workers", Namespace: run.Namespace,
+		Spec:   batchv1.JobSpec{Completions: &completions},
+		Status: batchv1.JobStatus{Succeeded: 2},
 	}
 	r := newRunReconciler(t, nil, run, job)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -482,16 +477,16 @@ func TestObserveJob_TransitionsToSucceeded(t *testing.T) {
 
 func TestObserveJob_TransitionsToFailedOnJobFailed(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("failing", "team-ns", "renovate-system")
+	run, _ := runFixture("failing", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseRunning
 	run.Status.WorkerJobRef = &corev1.ObjectReference{
-		APIVersion: "batch/v1", Kind: "Job",
+		APIVersion: testBatchAPIVersion, Kind: testJobKind,
 		Namespace: run.Namespace, Name: "failing-workers",
 	}
 	completions := int32(2)
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "failing-workers", Namespace: run.Namespace},
-		Spec:       batchv1.JobSpec{Completions: &completions},
+		Name: "failing-workers", Namespace: run.Namespace,
+		Spec: batchv1.JobSpec{Completions: &completions},
 		Status: batchv1.JobStatus{
 			Failed: 2,
 			Conditions: []batchv1.JobCondition{
@@ -502,7 +497,7 @@ func TestObserveJob_TransitionsToFailedOnJobFailed(t *testing.T) {
 	r := newRunReconciler(t, nil, run, job)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -517,16 +512,16 @@ func TestObserveJob_TransitionsToFailedOnJobFailed(t *testing.T) {
 
 func TestObserveJob_VanishedJobMarksFailed(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("vanished", "team-ns", "renovate-system")
+	run, _ := runFixture("vanished", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseRunning
 	run.Status.WorkerJobRef = &corev1.ObjectReference{
-		APIVersion: "batch/v1", Kind: "Job",
+		APIVersion: testBatchAPIVersion, Kind: testJobKind,
 		Namespace: run.Namespace, Name: "ghost-job",
 	}
 	r := newRunReconciler(t, nil, run) // no Job
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -540,12 +535,12 @@ func TestObserveJob_VanishedJobMarksFailed(t *testing.T) {
 
 func TestReconcile_TerminalPhasesAreNoOp(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("done", "team-ns", "renovate-system")
+	run, _ := runFixture("done", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseSucceeded
 	r := newRunReconciler(t, nil, run)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -559,7 +554,7 @@ func TestReconcile_NotFoundIsIgnored(t *testing.T) {
 	r := newRunReconciler(t, nil)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "missing"}})
+		reconcile.Request{Namespace: "ns", Name: "missing"})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v, want nil (NotFound)", err)
 	}
@@ -570,12 +565,12 @@ func TestReconcile_NotFoundIsIgnored(t *testing.T) {
 
 func TestReconcile_UnknownPhaseErrors(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("weird", "team-ns", "renovate-system")
+	run, _ := runFixture("weird", "team-ns", operatorTestNamespace)
 	run.Status.Phase = "Bogus"
 	r := newRunReconciler(t, nil, run)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err == nil {
 		t.Fatal("Reconcile err = nil, want unknown-phase error")
 	}
@@ -599,17 +594,17 @@ func runReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objs ..
 		Client:            cli,
 		Scheme:            scheme,
 		Clock:             clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
-		OperatorNamespace: "renovate-system",
+		OperatorNamespace: operatorTestNamespace,
 	}
 }
 
 func TestReconcile_StatusConflictRequeues(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("conflict", "team-ns", "renovate-system")
+	run, _ := runFixture("conflict", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseSucceeded
 
 	conflict := apierrors.NewConflict(
-		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovateruns"},
+		schema.GroupResource{Group: testAPIGroupDomain, Resource: "renovateruns"},
 		run.Name,
 		fmt.Errorf("optimistic concurrency"),
 	)
@@ -621,7 +616,7 @@ func TestReconcile_StatusConflictRequeues(t *testing.T) {
 	}, run)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
 	}
@@ -632,7 +627,7 @@ func TestReconcile_StatusConflictRequeues(t *testing.T) {
 
 func TestReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("update-err", "team-ns", "renovate-system")
+	run, _ := runFixture("update-err", "team-ns", operatorTestNamespace)
 	run.Status.Phase = renovatev1alpha1.RunPhaseSucceeded
 
 	r := runReconcilerWithInterceptor(t, interceptor.Funcs{
@@ -642,7 +637,7 @@ func TestReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 	}, run)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name})
 	if err == nil {
 		t.Fatal("Reconcile err = nil, want propagated update error")
 	}
@@ -650,17 +645,15 @@ func TestReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 
 func TestMirrorCredential_UpdatesExisting(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("mirror-update", "team-ns", "renovate-system")
+	run, src := runFixture("mirror-update", "team-ns", operatorTestNamespace)
 
 	// Pre-existing mirror with old data — mirrorCredential should overwrite
 	// with the freshly-minted access token. Mirror name is
 	// `renovate-creds-<runName>` per credentials.MirrorName.
 	dst := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "renovate-creds-" + run.Name,
-			Namespace: run.Namespace,
-		},
-		Data: map[string][]byte{"stale": []byte("data")},
+		Name:      "renovate-creds-" + run.Name,
+		Namespace: run.Namespace,
+		Data:      map[string][]byte{"stale": []byte("data")},
 	}
 
 	r := newRunReconciler(t, nil, run, src, dst)
@@ -693,17 +686,17 @@ func ioErrReconciler(t *testing.T, funcs interceptor.Funcs, objs ...client.Objec
 		Client:            cli,
 		Scheme:            scheme,
 		Clock:             clocktesting.NewFakeClock(time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)),
-		OperatorNamespace: "renovate-system",
+		OperatorNamespace: operatorTestNamespace,
 	}
 }
 
 func TestFetchSourceSecret_GetErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("source-get-err", "team-ns", "renovate-system")
+	run, src := runFixture("source-get-err", "team-ns", operatorTestNamespace)
 
 	r := ioErrReconciler(t, interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			if key.Namespace == "renovate-system" && key.Name == "creds" {
+			if key.Namespace == operatorTestNamespace && key.Name == testCredsSecretName {
 				return fmt.Errorf("apiserver flake")
 			}
 			return c.Get(ctx, key, obj, opts...)
@@ -721,7 +714,7 @@ func TestFetchSourceSecret_GetErrorWrapped(t *testing.T) {
 
 func TestMirrorCredential_CreateErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("mirror-create-err", "team-ns", "renovate-system")
+	run, src := runFixture("mirror-create-err", "team-ns", operatorTestNamespace)
 
 	r := ioErrReconciler(t, interceptor.Funcs{
 		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
@@ -729,7 +722,7 @@ func TestMirrorCredential_CreateErrorWrapped(t *testing.T) {
 		},
 	}, run, src)
 
-	_, err := r.mirrorCredential(context.Background(), run, "tok")
+	_, err := r.mirrorCredential(context.Background(), run, testTokenSecretName)
 	if err == nil {
 		t.Fatal("mirrorCredential err = nil")
 	}
@@ -740,7 +733,7 @@ func TestMirrorCredential_CreateErrorWrapped(t *testing.T) {
 
 func TestEnsureShardConfigMap_GetErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("shard-get-err", "team-ns", "renovate-system")
+	run, _ := runFixture("shard-get-err", "team-ns", operatorTestNamespace)
 
 	r := ioErrReconciler(t, interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -753,7 +746,7 @@ func TestEnsureShardConfigMap_GetErrorWrapped(t *testing.T) {
 	}, run)
 
 	_, _, err := r.ensureShardConfigMap(context.Background(), run,
-		[]platform.Repository{{Slug: "team-ns/a"}})
+		[]platform.Repository{{Slug: testRepoSlugA}})
 	if err == nil {
 		t.Fatal("ensureShardConfigMap err = nil")
 	}
@@ -764,7 +757,7 @@ func TestEnsureShardConfigMap_GetErrorWrapped(t *testing.T) {
 
 func TestEnsureShardConfigMap_InvalidBoundsError(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("shard-bad-bounds", "team-ns", "renovate-system")
+	run, _ := runFixture("shard-bad-bounds", "team-ns", operatorTestNamespace)
 	// MaxWorkers < MinWorkers — both non-zero so the function-local
 	// substitutions don't fire. sharding.Build then rejects.
 	run.Spec.ScanSnapshot.Workers.MinWorkers = 5
@@ -773,7 +766,7 @@ func TestEnsureShardConfigMap_InvalidBoundsError(t *testing.T) {
 	r := newRunReconciler(t, nil, run)
 
 	_, _, err := r.ensureShardConfigMap(context.Background(), run,
-		[]platform.Repository{{Slug: "team-ns/a"}})
+		[]platform.Repository{{Slug: testRepoSlugA}})
 	if err == nil {
 		t.Fatal("ensureShardConfigMap err = nil for bad bounds")
 	}
@@ -784,15 +777,15 @@ func TestEnsureShardConfigMap_InvalidBoundsError(t *testing.T) {
 
 func TestEnsureWorkerJob_GetErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("job-get-err", "team-ns", "renovate-system")
+	run, _ := runFixture("job-get-err", "team-ns", operatorTestNamespace)
 
 	mirrored := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-creds", Namespace: run.Namespace},
-		Data:       map[string][]byte{"private-key.pem": []byte("FAKE")},
+		Name: run.Name + "-creds", Namespace: run.Namespace,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: []byte("FAKE")},
 	}
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-shards", Namespace: run.Namespace},
-		Data:       map[string]string{"shard-0.json": "{}"},
+		Name: run.Name + "-shards", Namespace: run.Namespace,
+		Data: map[string]string{"shard-0.json": "{}"},
 	}
 
 	r := ioErrReconciler(t, interceptor.Funcs{
@@ -815,12 +808,10 @@ func TestEnsureWorkerJob_GetErrorWrapped(t *testing.T) {
 
 func TestMirrorCredential_UpdateErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("mirror-update-err", "team-ns", "renovate-system")
+	run, src := runFixture("mirror-update-err", "team-ns", operatorTestNamespace)
 	// Pre-create the mirror so mirrorCredential takes the update branch.
 	dst := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "renovate-creds-" + run.Name, Namespace: run.Namespace,
-		},
+		Name: "renovate-creds-" + run.Name, Namespace: run.Namespace,
 		Data: map[string][]byte{"stale": []byte("data")},
 	}
 
@@ -830,7 +821,7 @@ func TestMirrorCredential_UpdateErrorWrapped(t *testing.T) {
 		},
 	}, run, src, dst)
 
-	_, err := r.mirrorCredential(context.Background(), run, "tok")
+	_, err := r.mirrorCredential(context.Background(), run, testTokenSecretName)
 	if err == nil {
 		t.Fatal("mirrorCredential err = nil")
 	}
@@ -841,7 +832,7 @@ func TestMirrorCredential_UpdateErrorWrapped(t *testing.T) {
 
 func TestEnsureShardConfigMap_CreateErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("shard-create-err", "team-ns", "renovate-system")
+	run, _ := runFixture("shard-create-err", "team-ns", operatorTestNamespace)
 
 	r := ioErrReconciler(t, interceptor.Funcs{
 		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
@@ -850,7 +841,7 @@ func TestEnsureShardConfigMap_CreateErrorWrapped(t *testing.T) {
 	}, run)
 
 	_, _, err := r.ensureShardConfigMap(context.Background(), run,
-		[]platform.Repository{{Slug: "team-ns/a"}})
+		[]platform.Repository{{Slug: testRepoSlugA}})
 	if err == nil {
 		t.Fatal("ensureShardConfigMap err = nil")
 	}
@@ -861,14 +852,14 @@ func TestEnsureShardConfigMap_CreateErrorWrapped(t *testing.T) {
 
 func TestEnsureWorkerJob_CreateErrorWrapped(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("job-create-err", "team-ns", "renovate-system")
+	run, _ := runFixture("job-create-err", "team-ns", operatorTestNamespace)
 	mirrored := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-creds", Namespace: run.Namespace},
-		Data:       map[string][]byte{"private-key.pem": []byte("FAKE")},
+		Name: run.Name + "-creds", Namespace: run.Namespace,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: []byte("FAKE")},
 	}
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-shards", Namespace: run.Namespace},
-		Data:       map[string]string{"shard-0.json": "{}"},
+		Name: run.Name + "-shards", Namespace: run.Namespace,
+		Data: map[string]string{"shard-0.json": "{}"},
 	}
 
 	r := ioErrReconciler(t, interceptor.Funcs{

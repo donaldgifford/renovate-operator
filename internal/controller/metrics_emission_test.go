@@ -25,7 +25,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	renovatev1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
@@ -40,7 +39,7 @@ import (
 
 func TestMetrics_HappyPathEmitsDiscoveryDurationAndShardCount(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("metrics-happy", "metrics-ns-happy", "renovate-system")
+	run, src := runFixture("metrics-happy", "metrics-ns-happy", operatorTestNamespace)
 	run.Spec.ScanRef.Name = "scan-metrics-happy"
 	plat := &stubPlatformClient{
 		repos: []platform.Repository{
@@ -51,7 +50,7 @@ func TestMetrics_HappyPathEmitsDiscoveryDurationAndShardCount(t *testing.T) {
 	r := newRunReconciler(t, plat, run, src)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -71,13 +70,13 @@ func TestMetrics_HappyPathEmitsDiscoveryDurationAndShardCount(t *testing.T) {
 
 func TestMetrics_DiscoveryErrorIncrementsCounter(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("metrics-discovery-err", "metrics-ns-derr", "renovate-system")
+	run, src := runFixture("metrics-discovery-err", "metrics-ns-derr", operatorTestNamespace)
 	run.Spec.ScanRef.Name = "scan-metrics-derr"
 	plat := &stubPlatformClient{discoverErr: platform.ErrTransient}
 	r := newRunReconciler(t, plat, run, src)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -88,24 +87,24 @@ func TestMetrics_DiscoveryErrorIncrementsCounter(t *testing.T) {
 
 func TestMetrics_ObserveJobSucceededIncrementsRunsTotal(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("metrics-success", "metrics-ns-ok", "renovate-system")
+	run, _ := runFixture("metrics-success", "metrics-ns-ok", operatorTestNamespace)
 	run.Spec.ScanRef.Name = "scan-metrics-ok"
 	run.Status.Phase = renovatev1alpha1.RunPhaseRunning
 	run.Status.StartTime = &metav1.Time{Time: time.Date(2026, 4, 26, 11, 59, 0, 0, time.UTC)}
 	run.Status.WorkerJobRef = &corev1.ObjectReference{
-		APIVersion: "batch/v1", Kind: "Job",
+		APIVersion: testBatchAPIVersion, Kind: testJobKind,
 		Namespace: run.Namespace, Name: "metrics-success-workers",
 	}
 	completions := int32(2)
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "metrics-success-workers", Namespace: run.Namespace},
-		Spec:       batchv1.JobSpec{Completions: &completions},
-		Status:     batchv1.JobStatus{Succeeded: 2},
+		Name: "metrics-success-workers", Namespace: run.Namespace,
+		Spec:   batchv1.JobSpec{Completions: &completions},
+		Status: batchv1.JobStatus{Succeeded: 2},
 	}
 	r := newRunReconciler(t, nil, run, job)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -119,18 +118,18 @@ func TestMetrics_ObserveJobSucceededIncrementsRunsTotal(t *testing.T) {
 
 func TestMetrics_ObserveJobFailedIncrementsRunsAndShardsFailed(t *testing.T) {
 	t.Parallel()
-	run, _ := runFixture("metrics-jobfailed", "metrics-ns-jobfail", "renovate-system")
+	run, _ := runFixture("metrics-jobfailed", "metrics-ns-jobfail", operatorTestNamespace)
 	run.Spec.ScanRef.Name = "scan-metrics-jobfail"
 	run.Status.Phase = renovatev1alpha1.RunPhaseRunning
 	run.Status.StartTime = &metav1.Time{Time: time.Date(2026, 4, 26, 11, 59, 0, 0, time.UTC)}
 	run.Status.WorkerJobRef = &corev1.ObjectReference{
-		APIVersion: "batch/v1", Kind: "Job",
+		APIVersion: testBatchAPIVersion, Kind: testJobKind,
 		Namespace: run.Namespace, Name: "metrics-jobfailed-workers",
 	}
 	completions := int32(2)
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "metrics-jobfailed-workers", Namespace: run.Namespace},
-		Spec:       batchv1.JobSpec{Completions: &completions},
+		Name: "metrics-jobfailed-workers", Namespace: run.Namespace,
+		Spec: batchv1.JobSpec{Completions: &completions},
 		Status: batchv1.JobStatus{
 			Failed: 3,
 			Conditions: []batchv1.JobCondition{
@@ -141,7 +140,7 @@ func TestMetrics_ObserveJobFailedIncrementsRunsAndShardsFailed(t *testing.T) {
 	r := newRunReconciler(t, nil, run, job)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -162,19 +161,17 @@ func TestMetrics_ScanReconcileEmitsActiveRunsGauge(t *testing.T) {
 	plat := mkPlatform("github", true)
 	yes := true
 	inflight := &renovatev1alpha1.RenovateRun{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "in-flight", Namespace: scan.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: "RenovateScan",
-					Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
-			},
+		Name: testInFlightRunName, Namespace: scan.Namespace,
+		OwnerReferences: []metav1.OwnerReference{
+			{APIVersion: renovatev1alpha1.GroupVersion.String(), Kind: testRenovateScanKind,
+				Name: scan.Name, UID: scan.UID, Controller: &yes, BlockOwnerDeletion: &yes},
 		},
 	}
 	inflight.Status.Phase = renovatev1alpha1.RunPhaseRunning
 
 	r := newScanReconciler(t, now, scan, plat, inflight)
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: scan.Namespace, Name: scan.Name}}); err != nil {
+		reconcile.Request{Namespace: scan.Namespace, Name: scan.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 
@@ -185,13 +182,13 @@ func TestMetrics_ScanReconcileEmitsActiveRunsGauge(t *testing.T) {
 
 func TestMetrics_MarkFailedFromDiscoveryEmptyIncrementsRunsTotal(t *testing.T) {
 	t.Parallel()
-	run, src := runFixture("metrics-empty", "metrics-ns-empty", "renovate-system")
+	run, src := runFixture("metrics-empty", "metrics-ns-empty", operatorTestNamespace)
 	run.Spec.ScanRef.Name = "scan-metrics-empty"
 	plat := &stubPlatformClient{repos: nil}
 	r := newRunReconciler(t, plat, run, src)
 
 	if _, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}); err != nil {
+		reconcile.Request{Namespace: run.Namespace, Name: run.Name}); err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
 

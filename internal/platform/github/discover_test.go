@@ -128,7 +128,7 @@ func TestDiscover_AppAuth_UsesInstallationEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := newAppClient(t, srv, instID)
-	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: testGitHubOwner})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestDiscover_AppAuth_FiltersByOwner(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := newAppClient(t, srv, instID)
-	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: testGitHubOwner})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestDiscover_AppAuth_PublicGitHubBaseURLDoesNotUseEnterprisePrefix(t *testi
 		t.Fatalf("NewWithApp: %v", err)
 	}
 
-	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: testGitHubOwner})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestDiscover_AppAuth_PaginatesInstallationRepos(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := newAppClient(t, srv, instID)
-	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "donaldgifford"})
+	got, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: testGitHubOwner})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

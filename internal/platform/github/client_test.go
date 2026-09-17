@@ -33,6 +33,12 @@ import (
 	"github.com/donaldgifford/renovate-operator/internal/platform"
 )
 
+const (
+	testGitHubOwner   = "donaldgifford"
+	testOrgReposRoute = "GET /api/v3/orgs/o/repos"
+	testDefaultBranch = "main"
+)
+
 // fakeServer wires up a minimal subset of GitHub's REST API so we can drive
 // the client end-to-end without a network. Each path responds based on the
 // handlers map; missing paths return 404.
@@ -76,7 +82,7 @@ func TestDiscover_HappyPath_PaginatedOrg(t *testing.T) {
 	page2 := `[{"id":3,"name":"c","full_name":"o/c","default_branch":"main","fork":false,"archived":true,"topics":[]}]`
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, r *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, r *http.Request) {
 			page := r.URL.Query().Get("page")
 			switch page {
 			case "", "1":
@@ -100,7 +106,7 @@ func TestDiscover_HappyPath_PaginatedOrg(t *testing.T) {
 	if len(got) != 1 || got[0].Slug != "o/a" {
 		t.Errorf("Discover = %+v, want exactly o/a (forks and archived dropped)", got)
 	}
-	if got[0].DefaultBranch != "main" || len(got[0].Topics) != 1 || got[0].Topics[0] != "go" {
+	if got[0].DefaultBranch != testDefaultBranch || len(got[0].Topics) != 1 || got[0].Topics[0] != "go" {
 		t.Errorf("repo metadata not propagated: %+v", got[0])
 	}
 }
@@ -137,7 +143,7 @@ func TestDiscover_TopicAndPatternFilter(t *testing.T) {
   {"id":3,"full_name":"o/prefix-yes","default_branch":"main","topics":["dependencies"]}
 ]`
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(body))
 		},
 	}
@@ -181,7 +187,7 @@ func TestHasRenovateConfig_FirstHitWins(t *testing.T) {
 	}
 	c := newFakeClient(t, handlers)
 
-	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: "main"})
+	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: testDefaultBranch})
 	if err != nil {
 		t.Fatalf("HasRenovateConfig err = %v", err)
 	}
@@ -194,7 +200,7 @@ func TestHasRenovateConfig_AllMissing(t *testing.T) {
 	t.Parallel()
 
 	c := newFakeClient(t, map[string]http.HandlerFunc{})
-	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: "main"})
+	got, err := c.HasRenovateConfig(context.Background(), platform.Repository{Slug: "o/r", DefaultBranch: testDefaultBranch})
 	if err != nil {
 		t.Fatalf("HasRenovateConfig err = %v", err)
 	}
@@ -215,7 +221,7 @@ func TestUnauthorizedClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "Bad credentials", http.StatusUnauthorized)
 		},
 	}
@@ -231,7 +237,7 @@ func TestRateLimitedClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Retry-After", "30")
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 		},
@@ -239,8 +245,7 @@ func TestRateLimitedClassifies(t *testing.T) {
 	c := newFakeClient(t, handlers)
 
 	_, err := c.Discover(context.Background(), platform.DiscoveryFilter{Owner: "o"})
-	var rl *platform.RateLimitedError
-	if !errors.As(err, &rl) {
+	if _, ok := errors.AsType[*platform.RateLimitedError](err); !ok {
 		t.Fatalf("err = %v, want *RateLimitedError", err)
 	}
 	if !errors.Is(err, platform.ErrTransient) {
@@ -252,7 +257,7 @@ func TestMalformedJSONIsPermanent(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{not valid json[`))
 		},
 	}
@@ -284,7 +289,7 @@ func TestDiscover_FiftyReposPaginated(t *testing.T) {
 	}
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, r *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, r *http.Request) {
 			page := r.URL.Query().Get("page")
 			switch page {
 			case "", "1":
@@ -315,7 +320,7 @@ func TestServerErrorClassifiesAsTransient(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "boom", http.StatusBadGateway)
 		},
 	}
@@ -355,7 +360,7 @@ func TestUnexpectedStatusIsPermanent(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "validation failed", http.StatusUnprocessableEntity)
 		},
 		"GET /api/v3/users/o/repos": func(w http.ResponseWriter, _ *http.Request) {
@@ -406,7 +411,7 @@ func TestForbiddenClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 		},
 	}
@@ -426,7 +431,7 @@ func TestTypedRateLimitErrorClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			w.Header().Set("X-RateLimit-Reset", "1700000000")
 			w.WriteHeader(http.StatusForbidden)
@@ -438,8 +443,7 @@ func TestTypedRateLimitErrorClassifies(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil")
 	}
-	var rle *platform.RateLimitedError
-	if !errors.As(err, &rle) {
+	if _, ok := errors.AsType[*platform.RateLimitedError](err); !ok {
 		t.Errorf("err = %v, want *RateLimitedError", err)
 	}
 }
@@ -452,7 +456,7 @@ func TestAbuseRateLimitErrorClassifies(t *testing.T) {
 	t.Parallel()
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v3/orgs/o/repos": func(w http.ResponseWriter, _ *http.Request) {
+		testOrgReposRoute: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Retry-After", "60")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"message":"You have triggered an abuse detection mechanism","documentation_url":"https://docs.github.com/v3/#abuse-rate-limits"}`))
@@ -463,8 +467,7 @@ func TestAbuseRateLimitErrorClassifies(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil")
 	}
-	var rle *platform.RateLimitedError
-	if !errors.As(err, &rle) {
+	if _, ok := errors.AsType[*platform.RateLimitedError](err); !ok {
 		t.Errorf("err = %v, want *RateLimitedError", err)
 	}
 }

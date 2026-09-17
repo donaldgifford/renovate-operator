@@ -41,7 +41,7 @@ import (
 	"github.com/donaldgifford/renovate-operator/internal/conditions"
 )
 
-const operatorNS = "renovate-system"
+const operatorNS = operatorTestNamespace
 
 func newPlatformScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -72,10 +72,10 @@ func newPlatformReconciler(t *testing.T, objs ...client.Object) *RenovatePlatfor
 
 func mkGitHubAppPlatform(name, secretName string) *renovatev1alpha1.RenovatePlatform {
 	return &renovatev1alpha1.RenovatePlatform{
-		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("plat-" + name)},
+		Name: name, UID: types.UID("plat-" + name),
 		Spec: renovatev1alpha1.RenovatePlatformSpec{
 			PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-			RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+			RenovateImage: testRenovateImage,
 			Auth: renovatev1alpha1.PlatformAuth{
 				GitHubApp: &renovatev1alpha1.GitHubAppAuth{
 					AppID: 1, InstallationID: 1,
@@ -88,11 +88,11 @@ func mkGitHubAppPlatform(name, secretName string) *renovatev1alpha1.RenovatePlat
 
 func mkTokenPlatform(name, secretName string) *renovatev1alpha1.RenovatePlatform {
 	return &renovatev1alpha1.RenovatePlatform{
-		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("plat-" + name)},
+		Name: name, UID: types.UID("plat-" + name),
 		Spec: renovatev1alpha1.RenovatePlatformSpec{
 			PlatformType:  renovatev1alpha1.PlatformTypeForgejo,
-			BaseURL:       "https://forgejo.example.com",
-			RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+			BaseURL:       testForgejoBaseURL,
+			RenovateImage: testRenovateImage,
 			Auth: renovatev1alpha1.PlatformAuth{
 				Token: &renovatev1alpha1.TokenAuth{
 					SecretRef: renovatev1alpha1.SecretKeyReference{Name: secretName},
@@ -118,16 +118,16 @@ func genPKCS1PEM(t *testing.T) []byte {
 
 func TestPlatformReconcile_GitHubApp_HappyPath(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("github", "creds")
+	plat := mkGitHubAppPlatform("github", testCredsSecretName)
 	pemBytes := genPKCS1PEM(t)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: operatorNS},
-		Data:       map[string][]byte{"private-key.pem": pemBytes},
+		Name: testCredsSecretName, Namespace: operatorNS,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: pemBytes},
 	}
 	r := newPlatformReconciler(t, plat, secret)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -148,15 +148,15 @@ func TestPlatformReconcile_GitHubApp_HappyPath(t *testing.T) {
 
 func TestPlatformReconcile_TokenAuth_HappyPath(t *testing.T) {
 	t.Parallel()
-	plat := mkTokenPlatform("forgejo", "tok")
+	plat := mkTokenPlatform("forgejo", testTokenSecretName)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "tok", Namespace: operatorNS},
-		Data:       map[string][]byte{"token": []byte("opaque-token-value")},
+		Name: testTokenSecretName, Namespace: operatorNS,
+		Data: map[string][]byte{"token": []byte("opaque-token-value")},
 	}
 	r := newPlatformReconciler(t, plat, secret)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -170,11 +170,11 @@ func TestPlatformReconcile_TokenAuth_HappyPath(t *testing.T) {
 
 func TestPlatformReconcile_SecretMissingRequeues(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("github", "creds")
+	plat := mkGitHubAppPlatform("github", testCredsSecretName)
 	r := newPlatformReconciler(t, plat) // no secret
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -192,15 +192,15 @@ func TestPlatformReconcile_SecretMissingRequeues(t *testing.T) {
 
 func TestPlatformReconcile_KeyMissingRequeues(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("github", "creds")
+	plat := mkGitHubAppPlatform("github", testCredsSecretName)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: operatorNS},
-		Data:       map[string][]byte{"wrong-key": []byte("garbage")},
+		Name: testCredsSecretName, Namespace: operatorNS,
+		Data: map[string][]byte{"wrong-key": []byte("garbage")},
 	}
 	r := newPlatformReconciler(t, plat, secret)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -217,15 +217,15 @@ func TestPlatformReconcile_KeyMissingRequeues(t *testing.T) {
 
 func TestPlatformReconcile_InvalidPEMMarksAuthFailed(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("github", "creds")
+	plat := mkGitHubAppPlatform("github", testCredsSecretName)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: operatorNS},
-		Data:       map[string][]byte{"private-key.pem": []byte("not a real pem")},
+		Name: testCredsSecretName, Namespace: operatorNS,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: []byte("not a real pem")},
 	}
 	r := newPlatformReconciler(t, plat, secret)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -239,17 +239,17 @@ func TestPlatformReconcile_InvalidPEMMarksAuthFailed(t *testing.T) {
 
 func TestPlatformReconcile_PEMValidButUnparseableMarksAuthFailed(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("github", "creds")
+	plat := mkGitHubAppPlatform("github", testCredsSecretName)
 	// PEM-shaped envelope but non-key payload.
 	junk := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("not-a-key")})
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: operatorNS},
-		Data:       map[string][]byte{"private-key.pem": junk},
+		Name: testCredsSecretName, Namespace: operatorNS,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: junk},
 	}
 	r := newPlatformReconciler(t, plat, secret)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -264,17 +264,17 @@ func TestPlatformReconcile_PEMValidButUnparseableMarksAuthFailed(t *testing.T) {
 func TestPlatformReconcile_NoAuthSet(t *testing.T) {
 	t.Parallel()
 	plat := &renovatev1alpha1.RenovatePlatform{
-		ObjectMeta: metav1.ObjectMeta{Name: "lonely", UID: types.UID("plat-lonely")},
+		Name: "lonely", UID: types.UID("plat-lonely"),
 		Spec: renovatev1alpha1.RenovatePlatformSpec{
 			PlatformType:  renovatev1alpha1.PlatformTypeGitHub,
-			RenovateImage: "ghcr.io/renovatebot/renovate:latest",
+			RenovateImage: testRenovateImage,
 			// Auth deliberately empty
 		},
 	}
 	r := newPlatformReconciler(t, plat)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v", err)
 	}
@@ -290,7 +290,7 @@ func TestPlatformReconcile_NotFoundIgnored(t *testing.T) {
 	t.Parallel()
 	r := newPlatformReconciler(t)
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: "ghost"}})
+		reconcile.Request{Name: "ghost"})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -344,7 +344,7 @@ func TestPlatformsForSecret_MatchesByName(t *testing.T) {
 	r := newPlatformReconciler(t, p1, p2, p3)
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: operatorNS},
+		Name: "shared", Namespace: operatorNS,
 	}
 	reqs := r.platformsForSecret(context.Background(), secret)
 	if len(reqs) != 2 {
@@ -367,7 +367,7 @@ func TestPlatformsForSecret_IgnoresOtherNamespaces(t *testing.T) {
 	r := newPlatformReconciler(t, p1)
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "elsewhere"},
+		Name: "shared", Namespace: "elsewhere",
 	}
 	reqs := r.platformsForSecret(context.Background(), secret)
 	if len(reqs) != 0 {
@@ -379,7 +379,7 @@ func TestPlatformsForSecret_NonSecretReturnsNil(t *testing.T) {
 	t.Parallel()
 	r := newPlatformReconciler(t)
 	notSecret := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "cm", Namespace: operatorNS},
+		Name: "cm", Namespace: operatorNS,
 	}
 	reqs := r.platformsForSecret(context.Background(), notSecret)
 	if reqs != nil {
@@ -392,14 +392,14 @@ func TestSecretInOperatorNamespacePredicate(t *testing.T) {
 	p := secretInOperatorNamespacePredicate(operatorNS)
 
 	in := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: operatorNS},
+		Name: "x", Namespace: operatorNS,
 	}
 	if !p.Generic(event.GenericEvent{Object: in}) {
 		t.Error("predicate.Generic in-NS = false, want true")
 	}
 
 	out := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "elsewhere"},
+		Name: "x", Namespace: "elsewhere",
 	}
 	if p.Generic(event.GenericEvent{Object: out}) {
 		t.Error("predicate.Generic out-of-NS = true, want false")
@@ -428,9 +428,9 @@ func platformReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, ob
 
 func TestPlatformReconcile_StatusConflictRequeues(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("conflict", "creds")
+	plat := mkGitHubAppPlatform("conflict", testCredsSecretName)
 	conflict := apierrors.NewConflict(
-		schema.GroupResource{Group: "renovate.fartlab.dev", Resource: "renovateplatforms"},
+		schema.GroupResource{Group: testAPIGroupDomain, Resource: "renovateplatforms"},
 		plat.Name,
 		fmt.Errorf("optimistic concurrency"),
 	)
@@ -442,7 +442,7 @@ func TestPlatformReconcile_StatusConflictRequeues(t *testing.T) {
 	}, plat)
 
 	res, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err != nil {
 		t.Fatalf("Reconcile err = %v, want nil on conflict", err)
 	}
@@ -453,7 +453,7 @@ func TestPlatformReconcile_StatusConflictRequeues(t *testing.T) {
 
 func TestPlatformReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 	t.Parallel()
-	plat := mkGitHubAppPlatform("update-err", "creds")
+	plat := mkGitHubAppPlatform("update-err", testCredsSecretName)
 
 	r := platformReconcilerWithInterceptor(t, interceptor.Funcs{
 		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
@@ -462,7 +462,7 @@ func TestPlatformReconcile_StatusUpdateErrorPropagates(t *testing.T) {
 	}, plat)
 
 	_, err := r.Reconcile(context.Background(),
-		reconcile.Request{NamespacedName: types.NamespacedName{Name: plat.Name}})
+		reconcile.Request{Name: plat.Name})
 	if err == nil {
 		t.Fatal("Reconcile err = nil, want propagated update error")
 	}

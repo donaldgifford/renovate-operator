@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/donaldgifford/renovate-operator/api/v1alpha1"
 )
@@ -32,15 +31,15 @@ func TestDefaultPlatformClientFactory_GitHub(t *testing.T) {
 
 	pemBytes := genPKCS1PEM(t)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds"},
-		Data:       map[string][]byte{"private-key.pem": pemBytes},
+		Name: testCredsSecretName,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: pemBytes},
 	}
 	snap := v1alpha1.RenovatePlatformSpec{
 		PlatformType: v1alpha1.PlatformTypeGitHub,
 		Auth: v1alpha1.PlatformAuth{
 			GitHubApp: &v1alpha1.GitHubAppAuth{
 				AppID: 1, InstallationID: 1,
-				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: "creds"},
+				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: testCredsSecretName},
 			},
 		},
 	}
@@ -59,8 +58,8 @@ func TestDefaultPlatformClientFactory_GitHub_DefaultPEMKey(t *testing.T) {
 
 	pemBytes := genPKCS1PEM(t)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds"},
-		Data:       map[string][]byte{"private-key.pem": pemBytes},
+		Name: testCredsSecretName,
+		Data: map[string][]byte{defaultGitHubAppPEMKey: pemBytes},
 	}
 	// Empty Key triggers the default-key fallback.
 	snap := v1alpha1.RenovatePlatformSpec{
@@ -68,7 +67,7 @@ func TestDefaultPlatformClientFactory_GitHub_DefaultPEMKey(t *testing.T) {
 		Auth: v1alpha1.PlatformAuth{
 			GitHubApp: &v1alpha1.GitHubAppAuth{
 				AppID: 1, InstallationID: 1,
-				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: "creds"},
+				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: testCredsSecretName},
 			},
 		},
 	}
@@ -82,15 +81,15 @@ func TestDefaultPlatformClientFactory_GitHub_MissingKey(t *testing.T) {
 	f := DefaultPlatformClientFactory()
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "creds"},
-		Data:       map[string][]byte{}, // missing
+		Name: testCredsSecretName,
+		Data: map[string][]byte{}, // missing
 	}
 	snap := v1alpha1.RenovatePlatformSpec{
 		PlatformType: v1alpha1.PlatformTypeGitHub,
 		Auth: v1alpha1.PlatformAuth{
 			GitHubApp: &v1alpha1.GitHubAppAuth{
 				AppID: 1, InstallationID: 1,
-				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: "creds", Key: "wrong"},
+				PrivateKeyRef: v1alpha1.SecretKeyReference{Name: testCredsSecretName, Key: "wrong"},
 			},
 		},
 	}
@@ -121,7 +120,7 @@ func TestDefaultPlatformClientFactory_Forgejo_MissingTokenAuth(t *testing.T) {
 	f := DefaultPlatformClientFactory()
 	snap := v1alpha1.RenovatePlatformSpec{
 		PlatformType: v1alpha1.PlatformTypeForgejo,
-		BaseURL:      "https://forgejo.example.com",
+		BaseURL:      testForgejoBaseURL,
 	}
 	if _, err := f(context.Background(), snap, &corev1.Secret{}); err == nil {
 		t.Error("forgejo without token auth: err = nil, want non-nil")
@@ -133,15 +132,15 @@ func TestDefaultPlatformClientFactory_Forgejo_MissingTokenKey(t *testing.T) {
 	f := DefaultPlatformClientFactory()
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "tok"},
-		Data:       map[string][]byte{},
+		Name: testTokenSecretName,
+		Data: map[string][]byte{},
 	}
 	snap := v1alpha1.RenovatePlatformSpec{
 		PlatformType: v1alpha1.PlatformTypeForgejo,
-		BaseURL:      "https://forgejo.example.com",
+		BaseURL:      testForgejoBaseURL,
 		Auth: v1alpha1.PlatformAuth{
 			Token: &v1alpha1.TokenAuth{
-				SecretRef: v1alpha1.SecretKeyReference{Name: "tok", Key: "missing"},
+				SecretRef: v1alpha1.SecretKeyReference{Name: testTokenSecretName, Key: "missing"},
 			},
 		},
 	}

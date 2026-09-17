@@ -68,32 +68,32 @@ func TestDiscoveryOwner(t *testing.T) {
 		{
 			name:      "no_filter_falls_back_to_namespace",
 			filter:    nil,
-			namespace: "default",
-			want:      "default",
+			namespace: testDefaultNamespace,
+			want:      testDefaultNamespace,
 		},
 		{
 			name:      "first_filter_with_owner_prefix",
 			filter:    []string{"my-org/repo-*"},
-			namespace: "default",
+			namespace: testDefaultNamespace,
 			want:      "my-org",
 		},
 		{
 			name:      "filter_without_slash_falls_back_to_namespace",
 			filter:    []string{"plain-repo"},
-			namespace: "default",
-			want:      "default",
+			namespace: testDefaultNamespace,
+			want:      testDefaultNamespace,
 		},
 		{
 			name:      "first_with_slash_wins_over_later",
 			filter:    []string{"plain-repo", "second-org/x"},
-			namespace: "default",
+			namespace: testDefaultNamespace,
 			want:      "second-org",
 		},
 		{
 			name:      "leading_slash_treated_as_no_owner",
 			filter:    []string{"/foo"},
-			namespace: "default",
-			want:      "default",
+			namespace: testDefaultNamespace,
+			want:      testDefaultNamespace,
 		},
 	}
 	for _, tc := range cases {

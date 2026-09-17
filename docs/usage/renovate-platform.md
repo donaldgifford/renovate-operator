@@ -98,6 +98,7 @@ kubectl -n renovate-system create secret generic renovate-forgejo-token \
 | `runnerConfig`  | Opaque JSON passed as `RENOVATE_CONFIG` to every worker. Use for runner-level settings (`binarySource`, `dryRun`, `hostRules`, `onboarding`). Layered with per-Scan `renovateConfigOverrides` (Scan wins on collision). |
 | `presetRepoRef` | Renovate preset reference (e.g., `github>donaldgifford/renovate-config`). Workers prepend it to each repo's `renovate.json` as an `extends` entry.                                                                      |
 | `renovateImage` | Worker container image. Default `ghcr.io/renovatebot/renovate:latest`. Pin to a specific tag for production (see `test/manual/README.md` for the recommended pinning workflow).                                         |
+| `logLevel`      | Worker Renovate log level. One of `trace`, `debug`, `info` (default), `warn`, `error`, `fatal`. Forwarded as `LOG_LEVEL`. A Scan-level `logLevel` overrides this. Do **not** set `logLevel` inside `runnerConfig` — Renovate rejects it as an unknown config option. |
 
 ## Status
 

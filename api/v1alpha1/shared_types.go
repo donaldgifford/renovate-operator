@@ -72,6 +72,32 @@ const (
 	PlatformTypeForgejo PlatformType = "forgejo"
 )
 
+// LogLevel is a Renovate-supported logger level emitted to the worker as the
+// LOG_LEVEL env var. Renovate rejects `logLevel` inside RENOVATE_CONFIG; use
+// this field instead of overrides.
+// +kubebuilder:validation:Enum=trace;debug;info;warn;error;fatal
+type LogLevel string
+
+const (
+	// LogLevelTrace is Renovate's most verbose level.
+	LogLevelTrace LogLevel = "trace"
+
+	// LogLevelDebug enables per-request and per-package debug output.
+	LogLevelDebug LogLevel = "debug"
+
+	// LogLevelInfo is the operator default when LogLevel is unset.
+	LogLevelInfo LogLevel = "info"
+
+	// LogLevelWarn drops INFO-level lines.
+	LogLevelWarn LogLevel = "warn"
+
+	// LogLevelError keeps only error-level output.
+	LogLevelError LogLevel = "error"
+
+	// LogLevelFatal keeps only fatal-level output.
+	LogLevelFatal LogLevel = "fatal"
+)
+
 // RunPhase is a typed cursor over the Run state machine. Conditions remain
 // the source of truth; phase exists for printer columns and quick filtering.
 // +kubebuilder:validation:Enum=Pending;Discovering;Running;Succeeded;Failed

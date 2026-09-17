@@ -37,6 +37,26 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+// Shared test constants for goconst compliance (internal/controller test package only).
+const (
+	testCredsSecretName     = "creds"
+	testForgejoBaseURL      = "https://forgejo.example.com"
+	testTokenSecretName     = "tok"
+	testPlatformCredsSecret = "platform-creds"
+	testRenovateImage       = "ghcr.io/renovatebot/renovate:latest"
+	testAPIGroupDomain      = "renovate.fartlab.dev"
+	testScanName            = "scan"
+	testSchedule2AM         = "0 2 * * *"
+	testJobKind             = "Job"
+	testBatchAPIVersion     = "batch/v1"
+	testInFlightRunName     = "in-flight"
+	testRenovateScanKind    = "RenovateScan"
+	testUTCTimeZone         = "UTC"
+	testRepoSlugA           = "team-ns/a"
+	testRepoSlugRepoA       = "team-ns/repo-a"
+	testDefaultNamespace    = "default"
+)
+
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
