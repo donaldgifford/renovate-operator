@@ -219,21 +219,6 @@ If the App had been installed with "All repositories", or if the
 user had any *public* repos in the selected set, the bug would have
 been masked.
 
-## Conclusion
-
-**Answer:** `Discover` for App-auth Clients ignores the App's
-installation grant entirely. The org → user fallback path lists
-public repos for the owner regardless of which installation
-authorized the request. The bug only manifests for personal-account
-+ "Only select repositories" + at-least-one-public-repo-not-in-grant
-configurations; it would be invisible for org installations or
-"All repositories" installations.
-
-The fix is to route App-auth Clients through
-`/installation/repositories` (go-github `Apps.ListRepos`). PAT
-auth has no installation concept, so it keeps the existing org →
-user fallback.
-
 ### Observation 5 — explicit `baseURL: https://api.github.com` doubles the bug surface
 
 After deploying the `Apps.ListRepos` switch on the homelab, the next Run
@@ -265,6 +250,21 @@ asserts no request issued under that misconfiguration carries `/api/v3/`.
 The doc example in `renovate-platform.md` no longer suggests setting
 `baseURL: https://api.github.com` — that field is now reserved for
 actual GitHub Enterprise Server URLs.
+
+## Conclusion
+
+**Answer:** `Discover` for App-auth Clients ignores the App's
+installation grant entirely. The org → user fallback path lists
+public repos for the owner regardless of which installation
+authorized the request. The bug only manifests for personal-account
++ "Only select repositories" + at-least-one-public-repo-not-in-grant
+configurations; it would be invisible for org installations or
+"All repositories" installations.
+
+The fix is to route App-auth Clients through
+`/installation/repositories` (go-github `Apps.ListRepos`). PAT
+auth has no installation concept, so it keeps the existing org →
+user fallback.
 
 ## Recommendation
 
